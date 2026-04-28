@@ -1,5 +1,5 @@
-import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { createRoot } from 'react-dom/client';
+import { For, Show, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
+import { render } from 'solid-js/web';
 import maplibregl, { Map } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
@@ -28,16 +28,16 @@ type ApiError = {
 };
 
 function App() {
-  const [jobs, setJobs] = useState<ImportJob[]>([]);
-  const [jobsError, setJobsError] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [sourceKind, setSourceKind] = useState<'local_path' | 'url'>('local_path');
-  const [sourceValue, setSourceValue] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [jobs, setJobs] = createSignal<ImportJob[]>([]);
+  const [jobsError, setJobsError] = createSignal<string | null>(null);
+  const [submitError, setSubmitError] = createSignal<string | null>(null);
+  const [sourceKind, setSourceKind] = createSignal<'local_path' | 'url'>('local_path');
+  const [sourceValue, setSourceValue] = createSignal('');
+  const [isSubmitting, setIsSubmitting] = createSignal(false);
+  const [isImportPanelOpen, setIsImportPanelOpen] = createSignal(false);
 
-  const activeJob = useMemo(
-    () => jobs.find((job) => job.state === 'running' || job.state === 'queued') ?? null,
-    [jobs],
+  const activeJob = createMemo(
+    () => jobs().find((job) => job.state === 'running' || job.state === 'queued') ?? null,
   );
 
   async function loadJobs() {
@@ -53,20 +53,20 @@ function App() {
     }
   }
 
-  useEffect(() => {
+  onMount(() => {
     void loadJobs();
     const interval = window.setInterval(() => void loadJobs(), 3000);
-    return () => window.clearInterval(interval);
-  }, []);
+    onCleanup(() => window.clearInterval(interval));
+  });
 
-  async function submitImport(event: FormEvent<HTMLFormElement>) {
+  async function submitImport(event: SubmitEvent) {
     event.preventDefault();
     setSubmitError(null);
     setIsSubmitting(true);
 
-    const value = sourceValue.trim();
+    const value = sourceValue().trim();
     const source =
-      sourceKind === 'url'
+      sourceKind() === 'url'
         ? { type: 'url', url: value }
         : { type: 'local_path', path: value };
 
@@ -101,42 +101,62 @@ function App() {
   }
 
   return (
-    <main className="shell">
-      <section className="mapPane" aria-label="Map">
+    <main class="shell">
+      <section class="mapPane" aria-label="Map">
         <TileMap />
       </section>
 
-      <aside className="sidePanel" aria-label="Import controls">
-        <div className="brand">
+      <button
+        class="importHandle"
+        type="button"
+        aria-controls="import-panel"
+        aria-expanded={isImportPanelOpen()}
+        onClick={() => setIsImportPanelOpen((open) => !open)}
+      >
+        {isImportPanelOpen() ? 'Close imports' : 'Imports'}
+      </button>
+
+      <aside
+        id="import-panel"
+        class="sidePanel"
+        classList={{ open: isImportPanelOpen() }}
+        aria-label="Import controls"
+      >
+        <div class="brand">
           <h1>tileme</h1>
-          <StatusPill job={activeJob} />
+          <div class="brandActions">
+            <StatusPill job={activeJob()} />
+            <button class="iconButton" type="button" onClick={() => setIsImportPanelOpen(false)}>
+              Close
+            </button>
+          </div>
         </div>
 
-        <form className="importForm" onSubmit={submitImport}>
-          <div className="segmented" role="radiogroup" aria-label="Import source type">
+        <form class="importForm" onSubmit={submitImport}>
+          <div class="segmented" role="radiogroup" aria-label="Import source type">
             <button
               type="button"
-              className={sourceKind === 'local_path' ? 'selected' : ''}
+              classList={{ selected: sourceKind() === 'local_path' }}
               onClick={() => setSourceKind('local_path')}
             >
               File path
             </button>
             <button
               type="button"
-              className={sourceKind === 'url' ? 'selected' : ''}
+              classList={{ selected: sourceKind() === 'url' }}
               onClick={() => setSourceKind('url')}
             >
               URL
             </button>
           </div>
 
-          <label className="field">
-            <span>{sourceKind === 'url' ? 'OSM PBF URL' : 'Server file path'}</span>
+          <label class="field">
+            <span>{sourceKind() === 'url' ? 'OSM PBF URL' : 'Server file path'}</span>
             <input
-              value={sourceValue}
-              onChange={(event) => setSourceValue(event.target.value)}
+              value={sourceValue()}
+              onInput={(event) => setSourceValue(event.currentTarget.value)}
               placeholder={
-                sourceKind === 'url'
+                sourceKind() === 'url'
                   ? 'https://download.geofabrik.de/.../latest.osm.pbf'
                   : '/data/osm/australia-latest.osm.pbf'
               }
@@ -144,28 +164,33 @@ function App() {
             />
           </label>
 
-          {submitError && <p className="errorText">{submitError}</p>}
+          <Show when={submitError()}>
+            {(error) => <p class="errorText">{error()}</p>}
+          </Show>
 
-          <button className="primaryButton" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? 'Starting import' : 'Start import'}
+          <button class="primaryButton" type="submit" disabled={isSubmitting()}>
+            {isSubmitting() ? 'Starting import' : 'Start import'}
           </button>
         </form>
 
-        <div className="jobsHeader">
+        <div class="jobsHeader">
           <h2>Import jobs</h2>
           <button type="button" onClick={() => void loadJobs()}>
             Refresh
           </button>
         </div>
 
-        {jobsError && <p className="errorText">{jobsError}</p>}
+        <Show when={jobsError()}>
+          {(error) => <p class="errorText">{error()}</p>}
+        </Show>
 
-        <div className="jobList">
-          {jobs.length === 0 ? (
-            <p className="emptyState">No imports yet.</p>
-          ) : (
-            jobs.map((job) => <JobRow key={job.id} job={job} onCancel={cancelJob} />)
-          )}
+        <div class="jobList">
+          <Show
+            when={jobs().length > 0}
+            fallback={<p class="emptyState">No imports yet.</p>}
+          >
+            <For each={jobs()}>{(job) => <JobRow job={job} onCancel={cancelJob} />}</For>
+          </Show>
         </div>
       </aside>
     </main>
@@ -173,19 +198,15 @@ function App() {
 }
 
 function TileMap() {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<Map | null>(null);
-  const [mapError, setMapError] = useState<string | null>(null);
+  let containerRef!: HTMLDivElement;
+  let map: Map | null = null;
+  const [mapError, setMapError] = createSignal<string | null>(null);
 
-  useEffect(() => {
-    if (!containerRef.current || mapRef.current) {
-      return;
-    }
-
+  onMount(() => {
     const tileUrlTemplate = `${window.location.origin}/tiles/{z}/{x}/{y}.pbf`;
 
-    const map = new maplibregl.Map({
-      container: containerRef.current,
+    map = new maplibregl.Map({
+      container: containerRef,
       style: {
         version: 8,
         sources: {
@@ -214,17 +235,16 @@ function TileMap() {
       }
     });
 
-    mapRef.current = map;
-    return () => {
-      map.remove();
-      mapRef.current = null;
-    };
-  }, []);
+    onCleanup(() => {
+      map?.remove();
+      map = null;
+    });
+  });
 
   return (
     <>
-      <div ref={containerRef} className="map" />
-      {mapError && <div className="mapError">{mapError}</div>}
+      <div ref={containerRef} class="map" />
+      <Show when={mapError()}>{(error) => <div class="mapError">{error()}</div>}</Show>
     </>
   );
 }
@@ -295,37 +315,47 @@ const mapLayers: maplibregl.LayerSpecification[] = [
   },
 ];
 
-function JobRow({ job, onCancel }: { job: ImportJob; onCancel: (id: string) => Promise<void> }) {
-  const canCancel = job.state === 'queued' || job.state === 'running';
-  const message = job.error_message ?? job.progress_message ?? job.log_tail;
+function JobRow(props: { job: ImportJob; onCancel: (id: string) => Promise<void> }) {
+  const canCancel = createMemo(() => props.job.state === 'queued' || props.job.state === 'running');
+  const message = createMemo(() => props.job.error_message ?? props.job.progress_message ?? props.job.log_tail);
 
   return (
-    <article className="jobRow">
-      <div className="jobTop">
-        <span className={`stateBadge ${job.state}`}>{job.state}</span>
-        <time>{formatDate(job.created_at)}</time>
+    <article class="jobRow">
+      <div class="jobTop">
+        <span class={`stateBadge ${props.job.state}`}>{props.job.state}</span>
+        <time>{formatDate(props.job.created_at)}</time>
       </div>
-      <p className="sourceValue" title={job.source_value}>
-        {job.source_value}
+      <p class="sourceValue" title={props.job.source_value}>
+        {props.job.source_value}
       </p>
-      {message && <p className={job.error_message ? 'jobError' : 'jobMessage'}>{message}</p>}
-      <div className="jobActions">
-        <span>{job.source_type === 'url' ? 'URL' : 'Path'}</span>
-        {canCancel && (
-          <button type="button" onClick={() => void onCancel(job.id)} disabled={job.cancel_requested}>
-            {job.cancel_requested ? 'Cancel pending' : 'Cancel'}
+      <Show when={message()}>
+        {(text) => <p class={props.job.error_message ? 'jobError' : 'jobMessage'}>{text()}</p>}
+      </Show>
+      <div class="jobActions">
+        <span>{props.job.source_type === 'url' ? 'URL' : 'Path'}</span>
+        <Show when={canCancel()}>
+          <button
+            type="button"
+            onClick={() => void props.onCancel(props.job.id)}
+            disabled={props.job.cancel_requested}
+          >
+            {props.job.cancel_requested ? 'Cancel pending' : 'Cancel'}
           </button>
-        )}
+        </Show>
       </div>
     </article>
   );
 }
 
-function StatusPill({ job }: { job: ImportJob | null }) {
-  if (!job) {
-    return <span className="statusPill idle">Idle</span>;
-  }
-  return <span className={`statusPill ${job.state}`}>{job.state}</span>;
+function StatusPill(props: { job: ImportJob | null }) {
+  return (
+    <Show
+      when={props.job}
+      fallback={<span class="statusPill idle">Idle</span>}
+    >
+      {(job) => <span class={`statusPill ${job().state}`}>{job().state}</span>}
+    </Show>
+  );
 }
 
 function formatDate(value: string) {
@@ -346,8 +376,4 @@ async function readApiError(response: Response) {
   }
 }
 
-createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
+render(() => <App />, document.getElementById('root')!);
