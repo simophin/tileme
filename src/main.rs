@@ -4,6 +4,7 @@ mod db;
 mod error;
 mod imports;
 mod metrics;
+mod raster;
 mod static_assets;
 mod tiles;
 mod trace;
@@ -61,6 +62,7 @@ fn router(state: Arc<AppState>) -> Router {
     let app = Router::new()
         .merge(app::router())
         .merge(imports::router())
+        .merge(raster::router())
         .merge(tiles::router());
 
     #[cfg(debug_assertions)]

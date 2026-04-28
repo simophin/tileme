@@ -203,7 +203,7 @@ function TileMap() {
   const [mapError, setMapError] = createSignal<string | null>(null);
 
   onMount(() => {
-    const tileUrlTemplate = `${window.location.origin}/tiles/{z}/{x}/{y}.pbf`;
+    const tileUrlTemplate = `${window.location.origin}/raster/{z}/{x}/{y}.png`;
 
     map = new maplibregl.Map({
       container: containerRef,
@@ -211,18 +211,25 @@ function TileMap() {
         version: 8,
         sources: {
           tileme: {
-            type: 'vector',
+            type: 'raster',
             tiles: [tileUrlTemplate],
             minzoom: 0,
-            maxzoom: 14,
+            maxzoom: 16,
             scheme: 'xyz',
+            tileSize: 256,
           },
         },
-        layers: mapLayers,
+        layers: [
+          {
+            id: 'tileme-raster',
+            type: 'raster',
+            source: 'tileme',
+          },
+        ],
       },
       center: [133.7751, -25.2744],
       zoom: 3,
-      maxZoom: 14,
+      maxZoom: 16,
       attributionControl: false,
     });
 

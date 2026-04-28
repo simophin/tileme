@@ -46,6 +46,7 @@ GET  /readyz
 GET  /metrics
 GET  /tiles.json
 GET  /tiles/{z}/{x}/{y}.pbf
+GET  /raster/{z}/{x}/{y}.png
 POST /imports
 GET  /imports
 GET  /imports/{job_id}
@@ -129,7 +130,18 @@ Configuration is managed by `clap`; every setting can be provided as a CLI flag 
 | `--osm2pgsql-flex-path` | `TILEME_OSM2PGSQL_FLEX` | `osm2pgsql/flex.lua` |
 | `--osm2pgsql-cache-mb` | `TILEME_OSM2PGSQL_CACHE_MB` | `1024` |
 | `--cache-max-zoom` | `TILEME_CACHE_MAX_ZOOM` | `8` |
+| `--raster-cache-max-bytes` | `TILEME_RASTER_CACHE_MAX_BYTES` | `536870912` |
+| `--raster-cache-touch-interval-seconds` | `TILEME_RASTER_CACHE_TOUCH_INTERVAL_SECONDS` | `300` |
+| `--raster-style-version` | `TILEME_RASTER_STYLE_VERSION` | `1` |
 | `--log-json` | `TILEME_LOG_JSON` | `false` |
 | `--debug-vite-origin` | `TILEME_DEBUG_VITE_ORIGIN` | `http://127.0.0.1:4000` in debug builds |
 
 Import workers are woken through Postgres `LISTEN/NOTIFY` on the `tileme_import_jobs` channel. The process also performs a fixed slow sweep as a fallback for startup and missed notifications.
+
+## Raster tiles
+
+The frontend uses `/raster/{z}/{x}/{y}.png` by default. Raster tiles are cached in Postgres using a render hash derived from the vector tile bytes, tile coordinate, renderer version, and style version. The cache stores PNG blobs separately from coordinate refs so identical render outputs can share storage where it is safe to do so.
+
+Tiles are served through zoom 16. Raster rendering is done in-process with `maplibre_native`; the renderer loads a generated MapLibre style that points back at this server's `/tiles/{z}/{x}/{y}.pbf` endpoint, so `TILEME_PUBLIC_BASE_URL` should be set when the server is not reachable at its listen address.
+
+The Rust server owns HTTP handling, cache lookup/storage, rendering, and LRU eviction.

@@ -14,6 +14,8 @@ use crate::app::AppState;
 use crate::db;
 use crate::error::AppError;
 
+pub const MAX_ZOOM: u8 = 16;
+
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route("/tiles.json", get(tilejson))
@@ -53,14 +55,14 @@ async fn tilejson(State(state): State<Arc<AppState>>) -> Json<TileJson> {
         scheme: "xyz",
         tiles: vec![tile_url],
         minzoom: 0,
-        maxzoom: 14,
+        maxzoom: MAX_ZOOM,
         vector_layers: vec![
-            layer("water", 0, 14),
-            layer("landuse", 8, 14),
-            layer("roads", 5, 14),
-            layer("buildings", 14, 14),
-            layer("places", 2, 14),
-            layer("boundaries", 0, 14),
+            layer("water", 0, MAX_ZOOM),
+            layer("landuse", 8, MAX_ZOOM),
+            layer("roads", 5, MAX_ZOOM),
+            layer("buildings", 14, MAX_ZOOM),
+            layer("places", 2, MAX_ZOOM),
+            layer("boundaries", 0, MAX_ZOOM),
         ],
     })
 }
@@ -85,6 +87,17 @@ async fn tile(
 ) -> Result<Response<Body>, AppError> {
     let y = parse_y(&y)?;
     validate_tile(z, x, y)?;
+    let mvt = vector_tile_bytes(&state, z, x, y).await?;
+    state.metrics.tile_requests.with_label_values(&["ok"]).inc();
+    Ok(tile_response(mvt))
+}
+
+pub async fn vector_tile_bytes(
+    state: &Arc<AppState>,
+    z: u8,
+    x: u32,
+    y: u32,
+) -> Result<Vec<u8>, AppError> {
     let started = Instant::now();
     let version = db::current_tile_version(&state.pool).await?;
     let cacheable = z <= state.config.cache_max_zoom;
@@ -97,8 +110,7 @@ async fn tile(
                 .tile_cache_hits
                 .with_label_values(&[&z_label])
                 .inc();
-            state.metrics.tile_requests.with_label_values(&["ok"]).inc();
-            return Ok(tile_response(mvt));
+            return Ok(mvt);
         }
         state
             .metrics
@@ -124,13 +136,12 @@ async fn tile(
         .tile_generation_seconds
         .with_label_values(&[&z_label])
         .observe(started.elapsed().as_secs_f64());
-    state.metrics.tile_requests.with_label_values(&["ok"]).inc();
-    Ok(tile_response(mvt))
+    Ok(mvt)
 }
 
-fn validate_tile(z: u8, x: u32, y: u32) -> Result<(), AppError> {
-    if z > 14 {
-        return Err(AppError::BadRequest("max zoom is 14".into()));
+pub fn validate_tile(z: u8, x: u32, y: u32) -> Result<(), AppError> {
+    if z > MAX_ZOOM {
+        return Err(AppError::BadRequest(format!("max zoom is {MAX_ZOOM}")));
     }
     let max = 1u32
         .checked_shl(z.into())
