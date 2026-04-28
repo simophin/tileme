@@ -1,0 +1,14 @@
+services:
+  postgis:
+    image: docker.io/postgis/postgis:16-3.5
+    environment:
+      POSTGRES_USER: tileme
+      POSTGRES_PASSWORD: tileme
+      POSTGRES_DB: tileme
+    ports:
+      - "55432:5432"
+    volumes:
+      - postgis-data:/var/lib/postgresql/data
+
+volumes:
+  postgis-data:
