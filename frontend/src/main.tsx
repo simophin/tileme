@@ -182,15 +182,19 @@ function TileMap() {
       return;
     }
 
+    const tileUrlTemplate = `${window.location.origin}/tiles/{z}/{x}/{y}.pbf`;
+
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: {
         version: 8,
-        glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
         sources: {
           tileme: {
             type: 'vector',
-            url: '/tiles.json',
+            tiles: [tileUrlTemplate],
+            minzoom: 0,
+            maxzoom: 14,
+            scheme: 'xyz',
           },
         },
         layers: mapLayers,
@@ -288,24 +292,6 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     'source-layer': 'buildings',
     minzoom: 14,
     paint: { 'fill-color': '#c6a889', 'fill-opacity': 0.76 },
-  },
-  {
-    id: 'places',
-    type: 'symbol',
-    source: 'tileme',
-    'source-layer': 'places',
-    minzoom: 2,
-    layout: {
-      'text-field': ['get', 'name'],
-      'text-font': ['Open Sans Regular'],
-      'text-size': ['interpolate', ['linear'], ['zoom'], 2, 10, 8, 14],
-      'text-anchor': 'center',
-    },
-    paint: {
-      'text-color': '#1f2d33',
-      'text-halo-color': '#f5f4ef',
-      'text-halo-width': 1.5,
-    },
   },
 ];
 

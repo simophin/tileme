@@ -17,7 +17,7 @@ use crate::error::AppError;
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route("/tiles.json", get(tilejson))
-        .route("/tiles/:z/:x/:y", get(tile))
+        .route("/tiles/{z}/{x}/{y}", get(tile))
 }
 
 #[derive(Serialize)]

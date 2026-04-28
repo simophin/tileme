@@ -29,8 +29,8 @@ const JOB_COLUMNS: &str = "id, source_type::text AS source_type, source_value, m
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route("/imports", post(create_import).get(list_imports))
-        .route("/imports/:id", get(get_import))
-        .route("/imports/:id/cancel", post(cancel_import))
+        .route("/imports/{id}", get(get_import))
+        .route("/imports/{id}/cancel", post(cancel_import))
 }
 
 #[derive(Debug, Deserialize)]
