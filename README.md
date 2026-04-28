@@ -26,6 +26,7 @@ podman run --name tileme-postgis --replace -d \
 
 ```sh
 export DATABASE_URL=postgres://tileme:tileme@127.0.0.1:55432/tileme
+export TILEME_PUBLIC_BASE_URL=http://127.0.0.1:3000
 cargo run
 ```
 
@@ -33,7 +34,8 @@ The same settings can be supplied as command-line flags:
 
 ```sh
 cargo run -- \
-  --database-url postgres://tileme:tileme@127.0.0.1:55432/tileme
+  --database-url postgres://tileme:tileme@127.0.0.1:55432/tileme \
+  --public-base-url http://127.0.0.1:3000
 ```
 
 Useful endpoints:
@@ -49,6 +51,43 @@ GET  /imports
 GET  /imports/{job_id}
 POST /imports/{job_id}/cancel
 ```
+
+## Frontend
+
+The React/MapLibre frontend lives in `frontend/`.
+
+For development, run Vite on `127.0.0.1:4000`, then run the Rust server on
+`127.0.0.1:3000`. Debug builds proxy frontend requests from the Rust server to
+Vite, so frontend changes do not require rebuilding the Rust binary.
+
+```sh
+cd frontend
+export PATH=/home/linuxbrew/.linuxbrew/bin:$PATH
+npm install
+npm run dev
+```
+
+Then, from the repository root:
+
+```sh
+export DATABASE_URL=postgres://tileme:tileme@127.0.0.1:55432/tileme
+export TILEME_PUBLIC_BASE_URL=http://127.0.0.1:3000
+cargo run
+```
+
+Set `TILEME_DEBUG_VITE_ORIGIN` if Vite is running somewhere other than
+`http://127.0.0.1:4000`. For production, build the frontend before compiling the
+Rust binary:
+
+```sh
+cd frontend
+npm install
+npm run build
+cd ..
+cargo build --release
+```
+
+The Rust binary embeds `frontend/dist` and serves it from `/`.
 
 ## Import OSM
 
@@ -84,11 +123,13 @@ Configuration is managed by `clap`; every setting can be provided as a CLI flag 
 | --- | --- | --- |
 | `--database-url` | `DATABASE_URL` | required |
 | `--listen-addr` | `TILEME_LISTEN_ADDR` | `127.0.0.1:3000` |
+| `--public-base-url` | `TILEME_PUBLIC_BASE_URL` | relative tile URLs |
 | `--import-dir` | `TILEME_IMPORT_DIR` | `/tmp/tileme-imports` |
 | `--osm2pgsql-bin` | `TILEME_OSM2PGSQL_BIN` | `osm2pgsql` |
 | `--osm2pgsql-flex-path` | `TILEME_OSM2PGSQL_FLEX` | `osm2pgsql/flex.lua` |
 | `--osm2pgsql-cache-mb` | `TILEME_OSM2PGSQL_CACHE_MB` | `1024` |
 | `--cache-max-zoom` | `TILEME_CACHE_MAX_ZOOM` | `8` |
 | `--log-json` | `TILEME_LOG_JSON` | `false` |
+| `--debug-vite-origin` | `TILEME_DEBUG_VITE_ORIGIN` | `http://127.0.0.1:4000` in debug builds |
 
 Import workers are woken through Postgres `LISTEN/NOTIFY` on the `tileme_import_jobs` channel. The process also performs a fixed slow sweep as a fallback for startup and missed notifications.

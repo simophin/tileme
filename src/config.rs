@@ -6,12 +6,15 @@ use clap::Parser;
 pub struct Config {
     pub database_url: String,
     pub listen_addr: String,
+    pub public_base_url: Option<String>,
     pub import_dir: PathBuf,
     pub osm2pgsql_bin: String,
     pub osm2pgsql_flex_path: PathBuf,
     pub osm2pgsql_cache_mb: u32,
     pub cache_max_zoom: u8,
     pub log_json: bool,
+    #[cfg(debug_assertions)]
+    pub debug_vite_origin: String,
 }
 
 impl Config {
@@ -28,6 +31,9 @@ struct Cli {
 
     #[arg(long, env = "TILEME_LISTEN_ADDR", default_value = "127.0.0.1:3000")]
     listen_addr: String,
+
+    #[arg(long, env = "TILEME_PUBLIC_BASE_URL")]
+    public_base_url: Option<String>,
 
     #[arg(long, env = "TILEME_IMPORT_DIR", default_value = "/tmp/tileme-imports")]
     import_dir: PathBuf,
@@ -50,6 +56,14 @@ struct Cli {
 
     #[arg(long, env = "TILEME_LOG_JSON", default_value_t = false)]
     log_json: bool,
+
+    #[cfg(debug_assertions)]
+    #[arg(
+        long,
+        env = "TILEME_DEBUG_VITE_ORIGIN",
+        default_value = "http://127.0.0.1:4000"
+    )]
+    debug_vite_origin: String,
 }
 
 impl From<Cli> for Config {
@@ -57,12 +71,15 @@ impl From<Cli> for Config {
         Self {
             database_url: cli.database_url,
             listen_addr: cli.listen_addr,
+            public_base_url: cli.public_base_url,
             import_dir: cli.import_dir,
             osm2pgsql_bin: cli.osm2pgsql_bin,
             osm2pgsql_flex_path: cli.osm2pgsql_flex_path,
             osm2pgsql_cache_mb: cli.osm2pgsql_cache_mb,
             cache_max_zoom: cli.cache_max_zoom,
             log_json: cli.log_json,
+            #[cfg(debug_assertions)]
+            debug_vite_origin: cli.debug_vite_origin,
         }
     }
 }

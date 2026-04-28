@@ -4,6 +4,7 @@ mod db;
 mod error;
 mod imports;
 mod metrics;
+mod static_assets;
 mod tiles;
 mod trace;
 
@@ -24,6 +25,8 @@ use crate::config::Config;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
+
     let config = Config::from_args();
     trace::init(&config)?;
 
@@ -55,11 +58,18 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn router(state: Arc<AppState>) -> Router {
-    Router::new()
+    let app = Router::new()
         .merge(app::router())
         .merge(imports::router())
-        .merge(tiles::router())
-        .layer(PropagateRequestIdLayer::x_request_id())
+        .merge(tiles::router());
+
+    #[cfg(debug_assertions)]
+    let app = app.merge(static_assets::router(&state.config.debug_vite_origin));
+
+    #[cfg(not(debug_assertions))]
+    let app = app.merge(static_assets::router());
+
+    app.layer(PropagateRequestIdLayer::x_request_id())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())

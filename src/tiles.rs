@@ -40,20 +40,25 @@ struct VectorLayer {
     maxzoom: u8,
 }
 
-async fn tilejson() -> Json<TileJson> {
+async fn tilejson(State(state): State<Arc<AppState>>) -> Json<TileJson> {
+    let tile_url = match &state.config.public_base_url {
+        Some(base) => format!("{}/tiles/{{z}}/{{x}}/{{y}}.pbf", base.trim_end_matches('/')),
+        None => "/tiles/{z}/{x}/{y}.pbf".into(),
+    };
+
     Json(TileJson {
         tilejson: "3.0.0",
         name: "tileme",
         version: "0.1.0",
         scheme: "xyz",
-        tiles: vec!["/tiles/{z}/{x}/{y}.pbf".into()],
+        tiles: vec![tile_url],
         minzoom: 0,
         maxzoom: 14,
         vector_layers: vec![
             layer("water", 0, 14),
-            layer("landuse", 4, 14),
+            layer("landuse", 8, 14),
             layer("roads", 5, 14),
-            layer("buildings", 13, 14),
+            layer("buildings", 14, 14),
             layer("places", 2, 14),
             layer("boundaries", 0, 14),
         ],
@@ -213,7 +218,13 @@ landuse AS (
     FROM (
         SELECT class, name, ST_AsMVTGeom(l.geom, bounds.geom, 4096, 64, true) AS geom
         FROM osm_landuse l, bounds
-        WHERE $1 >= 4 AND l.geom && bounds.geom
+        WHERE $1 >= 8
+          AND l.geom && bounds.geom
+          AND (
+              $1 >= 12
+              OR ($1 >= 10 AND ST_Area(l.geom) > 50000)
+              OR ($1 >= 8 AND ST_Area(l.geom) > 250000)
+          )
     ) landuse_rows
 ),
 roads AS (
@@ -221,7 +232,23 @@ roads AS (
     FROM (
         SELECT class, name, ref, layer, tunnel, bridge, ST_AsMVTGeom(r.geom, bounds.geom, 4096, 64, true) AS geom
         FROM osm_roads r, bounds
-        WHERE $1 >= 5 AND r.geom && bounds.geom
+        WHERE $1 >= 5
+          AND r.geom && bounds.geom
+          AND (
+              $1 >= 14
+              OR ($1 >= 13 AND r.class IN ('motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential'))
+              OR ($1 >= 12 AND r.class IN ('motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified'))
+              OR ($1 >= 10 AND r.class IN ('motorway', 'trunk', 'primary', 'secondary', 'tertiary'))
+              OR ($1 >= 8 AND r.class IN ('motorway', 'trunk', 'primary'))
+              OR ($1 >= 6 AND r.class IN ('motorway', 'trunk'))
+              OR r.class = 'motorway'
+          )
+          AND (
+              $1 >= 12
+              OR ($1 >= 10 AND ST_Length(r.geom) > 250)
+              OR ($1 >= 8 AND ST_Length(r.geom) > 500)
+              OR ST_Length(r.geom) > 1000
+          )
     ) roads_rows
 ),
 buildings AS (
@@ -229,7 +256,7 @@ buildings AS (
     FROM (
         SELECT class, height, ST_AsMVTGeom(b.geom, bounds.geom, 4096, 64, true) AS geom
         FROM osm_buildings b, bounds
-        WHERE $1 >= 13 AND b.geom && bounds.geom
+        WHERE $1 >= 14 AND b.geom && bounds.geom
     ) building_rows
 ),
 places AS (
@@ -237,7 +264,15 @@ places AS (
     FROM (
         SELECT class, name, population, ST_AsMVTGeom(p.geom, bounds.geom, 4096, 64, true) AS geom
         FROM osm_places p, bounds
-        WHERE $1 >= 2 AND p.geom && bounds.geom
+        WHERE $1 >= 2
+          AND p.geom && bounds.geom
+          AND (
+              $1 >= 12
+              OR ($1 >= 10 AND p.class IN ('city', 'town', 'village', 'suburb'))
+              OR ($1 >= 7 AND p.class IN ('city', 'town', 'village'))
+              OR ($1 >= 5 AND p.class IN ('city', 'town'))
+              OR p.class = 'city'
+          )
     ) place_rows
 ),
 boundaries AS (
@@ -246,6 +281,11 @@ boundaries AS (
         SELECT admin_level, name, ST_AsMVTGeom(b.geom, bounds.geom, 4096, 64, true) AS geom
         FROM osm_boundaries b, bounds
         WHERE b.geom && bounds.geom
+          AND (
+              $1 >= 10
+              OR ($1 >= 7 AND b.admin_level <= 6)
+              OR b.admin_level <= 4
+          )
     ) boundary_rows
 )
 SELECT
