@@ -44,6 +44,7 @@ local addresses = osm2pgsql.define_node_table('osm_addresses', {
   { column = 'city', type = 'text' },
   { column = 'state', type = 'text' },
   { column = 'postcode', type = 'text' },
+  { column = 'country', type = 'text' },
   { column = 'geom', type = 'point', projection = srid },
 })
 
@@ -68,6 +69,13 @@ local boundaries = osm2pgsql.define_relation_table('osm_boundaries', {
   { column = 'admin_level', type = 'int' },
   { column = 'name', type = 'text' },
   { column = 'geom', type = 'multilinestring', projection = srid },
+})
+
+local admin_areas = osm2pgsql.define_area_table('osm_admin_areas', {
+  { column = 'osm_id', type = 'bigint' },
+  { column = 'admin_level', type = 'int' },
+  { column = 'name', type = 'text' },
+  { column = 'geom', type = 'multipolygon', projection = srid },
 })
 
 local function as_bool(value)
@@ -222,6 +230,7 @@ function osm2pgsql.process_node(object)
       city = object.tags["addr:city"],
       state = object.tags["addr:state"],
       postcode = object.tags["addr:postcode"],
+      country = object.tags["addr:country"],
       geom = object:as_point()
     })
   end
@@ -253,11 +262,23 @@ end
 
 function osm2pgsql.process_relation(object)
   if object.tags.boundary == 'administrative' then
+    local admin_level = as_int(object.tags.admin_level)
+
     boundaries:insert({
       osm_id = object.id,
-      admin_level = as_int(object.tags.admin_level),
+      admin_level = admin_level,
       name = object.tags.name,
       geom = object:as_multilinestring()
     })
+
+    local area_geom = object:as_multipolygon()
+    if object.tags.name and admin_level and area_geom then
+      admin_areas:insert({
+        osm_id = object.id,
+        admin_level = admin_level,
+        name = object.tags.name,
+        geom = area_geom
+      })
+    end
   end
 end

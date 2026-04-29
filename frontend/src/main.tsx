@@ -55,6 +55,7 @@ type ResolvedAddress = {
   city: string | null;
   state: string | null;
   postcode: string | null;
+  country: string | null;
   distance_meters: number;
   lat: number;
   lon: number;

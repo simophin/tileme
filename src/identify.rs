@@ -68,6 +68,7 @@ struct ResolvedAddress {
     city: Option<String>,
     state: Option<String>,
     postcode: Option<String>,
+    country: Option<String>,
     distance_meters: f64,
     lat: f64,
     lon: f64,
@@ -258,26 +259,59 @@ SELECT
         concat_ws(
             ' ',
             CASE
-                WHEN a.unit IS NOT NULL AND a.unit <> '' THEN a.unit || '/' || a.house_number
+                WHEN nullif(a.unit, '') IS NOT NULL THEN nullif(a.unit, '') || '/' || a.house_number
                 ELSE a.house_number
             END,
-            a.street
+            nullif(a.street, '')
         ),
-        a.suburb,
-        a.city,
-        concat_ws(' ', a.state, a.postcode)
+        COALESCE(nullif(a.suburb, ''), suburb_area.name),
+        nullif(a.city, ''),
+        nullif(concat_ws(' ', COALESCE(nullif(a.state, ''), state_area.name), nullif(a.postcode, '')), ''),
+        COALESCE(nullif(a.country, ''), country_area.name)
     ) AS formatted_address,
-    a.unit,
+    nullif(a.unit, '') AS unit,
     a.house_number,
-    a.street,
-    a.suburb,
-    a.city,
-    a.state,
-    a.postcode,
+    nullif(a.street, '') AS street,
+    COALESCE(nullif(a.suburb, ''), suburb_area.name) AS suburb,
+    nullif(a.city, '') AS city,
+    COALESCE(nullif(a.state, ''), state_area.name) AS state,
+    nullif(a.postcode, '') AS postcode,
+    COALESCE(nullif(a.country, ''), country_area.name) AS country,
     ST_Distance(ST_Transform(a.geom, 4326)::geography, click.geog) AS distance_meters,
     ST_Y(ST_Transform(a.geom, 4326)) AS lat,
     ST_X(ST_Transform(a.geom, 4326)) AS lon
-FROM osm_addresses a, click
+FROM osm_addresses a
+CROSS JOIN click
+LEFT JOIN LATERAL (
+    SELECT area.name
+    FROM osm_admin_areas area
+    WHERE area.name IS NOT NULL
+      AND area.admin_level IN (8, 9, 10, 11)
+      AND area.geom && a.geom
+      AND ST_Covers(area.geom, a.geom)
+    ORDER BY area.admin_level DESC, ST_Area(area.geom)
+    LIMIT 1
+) suburb_area ON true
+LEFT JOIN LATERAL (
+    SELECT area.name
+    FROM osm_admin_areas area
+    WHERE area.name IS NOT NULL
+      AND area.admin_level = 4
+      AND area.geom && a.geom
+      AND ST_Covers(area.geom, a.geom)
+    ORDER BY ST_Area(area.geom)
+    LIMIT 1
+) state_area ON true
+LEFT JOIN LATERAL (
+    SELECT area.name
+    FROM osm_admin_areas area
+    WHERE area.name IS NOT NULL
+      AND area.admin_level = 2
+      AND area.geom && a.geom
+      AND ST_Covers(area.geom, a.geom)
+    ORDER BY ST_Area(area.geom)
+    LIMIT 1
+) country_area ON true
 WHERE a.geom && ST_Expand(click.geom, $3)
   AND ST_DWithin(ST_Transform(a.geom, 4326)::geography, click.geog, $4)
 ORDER BY distance_meters, a.house_number, a.street
@@ -302,6 +336,7 @@ LIMIT 1
             city: row.try_get("city")?,
             state: row.try_get("state")?,
             postcode: row.try_get("postcode")?,
+            country: row.try_get("country")?,
             distance_meters: row.try_get("distance_meters")?,
             lat: row.try_get("lat")?,
             lon: row.try_get("lon")?,

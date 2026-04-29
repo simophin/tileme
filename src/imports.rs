@@ -460,7 +460,7 @@ async fn prepare_database_for_replace(pool: &PgPool) -> Result<()> {
     sqlx::query("DROP MATERIALIZED VIEW IF EXISTS gen_water_z6_8")
         .execute(pool)
         .await?;
-    sqlx::query("DROP TABLE IF EXISTS osm_roads, osm_water, osm_landuse, osm_buildings, osm_addresses, osm_places, osm_pois, osm_boundaries CASCADE")
+    sqlx::query("DROP TABLE IF EXISTS osm_roads, osm_water, osm_landuse, osm_buildings, osm_addresses, osm_places, osm_pois, osm_boundaries, osm_admin_areas CASCADE")
         .execute(pool)
         .await?;
     Ok(())
@@ -481,6 +481,8 @@ async fn post_import_database_setup(pool: &PgPool) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS osm_pois_geom_idx ON osm_pois USING gist (geom)",
         "CREATE INDEX IF NOT EXISTS osm_pois_source_class_idx ON osm_pois (source, class)",
         "CREATE INDEX IF NOT EXISTS osm_boundaries_geom_idx ON osm_boundaries USING gist (geom)",
+        "CREATE INDEX IF NOT EXISTS osm_admin_areas_geom_idx ON osm_admin_areas USING gist (geom)",
+        "CREATE INDEX IF NOT EXISTS osm_admin_areas_admin_level_idx ON osm_admin_areas (admin_level)",
         "CREATE MATERIALIZED VIEW gen_water_z0_5 AS SELECT osm_id, class, name, ST_Multi(ST_SimplifyPreserveTopology(geom, 8000))::geometry(MultiPolygon, 3857) AS geom FROM osm_water WHERE ST_Area(geom) > 10000000",
         "CREATE INDEX gen_water_z0_5_geom_idx ON gen_water_z0_5 USING gist (geom)",
         "CREATE MATERIALIZED VIEW gen_water_z6_8 AS SELECT osm_id, class, name, ST_Multi(ST_SimplifyPreserveTopology(geom, 1500))::geometry(MultiPolygon, 3857) AS geom FROM osm_water WHERE ST_Area(geom) > 1000000",
