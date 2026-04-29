@@ -339,7 +339,7 @@ function TileMap() {
                 <For each={result().features}>
                   {(feature) => (<article class="identifyItem">
                       <div>
-                        <strong>{feature.name}</strong>
+                        <strong>{featureTitle(feature)}</strong>
                         <span>{featureLabel(feature)}</span>
                       </div>
                       <small>{formatMeters(feature.distance_meters)}</small>
@@ -409,9 +409,16 @@ function formatCoordinate(lat, lon) {
     return `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
 }
 function featureLabel(feature) {
-    return [feature.house_number, feature.street, feature.layer, feature.source, feature.class]
+    const addressNumber = feature.unit && feature.house_number ? `${feature.unit}/${feature.house_number}` : feature.house_number;
+    return [addressNumber, feature.street, feature.layer, feature.source, feature.class]
         .filter(Boolean)
         .join(' / ');
+}
+function featureTitle(feature) {
+    if (feature.layer === 'address' && feature.house_number) {
+        return feature.unit ? `${feature.unit}/${feature.house_number}` : feature.house_number;
+    }
+    return feature.name;
 }
 function formatMeters(value) {
     if (value < 1) {
@@ -440,7 +447,26 @@ const mapLayers = [
         source: 'tileme',
         'source-layer': 'landuse',
         minzoom: 8,
-        paint: { 'fill-color': '#bfd4ad', 'fill-opacity': 0.5 },
+        paint: {
+            'fill-color': [
+                'match',
+                ['get', 'class'],
+                'park',
+                '#b8d99a',
+                'grass',
+                '#bfdc9a',
+                'recreation_ground',
+                '#bad59b',
+                'nature_reserve',
+                '#a8ca8f',
+                'wood',
+                '#95ba7f',
+                'forest',
+                '#8eb377',
+                '#cdbfa1',
+            ],
+            'fill-opacity': ['match', ['get', 'class'], 'park', 0.72, 'grass', 0.68, 'wood', 0.78, 'forest', 0.8, 0.56],
+        },
     },
     {
         id: 'boundaries',
@@ -513,7 +539,12 @@ const mapLayers = [
         minzoom: 16,
         filter: ['has', 'house_number'],
         layout: {
-            'text-field': ['get', 'house_number'],
+            'text-field': [
+                'case',
+                ['has', 'unit'],
+                ['concat', ['get', 'unit'], '/', ['get', 'house_number']],
+                ['get', 'house_number'],
+            ],
             'text-font': ['Noto Sans Regular'],
             'text-size': ['interpolate', ['linear'], ['zoom'], 16, 10, 18, 12],
             'text-anchor': 'center',

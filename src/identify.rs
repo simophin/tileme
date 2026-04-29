@@ -39,6 +39,7 @@ struct IdentifiedFeature {
     source: Option<String>,
     class: Option<String>,
     name: String,
+    unit: Option<String>,
     house_number: Option<String>,
     street: Option<String>,
     distance_meters: f64,
@@ -72,6 +73,7 @@ matches AS (
         'address' AS source,
         NULL::text AS class,
         COALESCE(a.name, a.house_number) AS name,
+        a.unit,
         a.house_number,
         a.street,
         ST_Distance(ST_Transform(a.geom, 4326)::geography, click.geog) AS distance_meters,
@@ -97,6 +99,7 @@ matches AS (
                 ELSE 'Building'
             END
         ) AS name,
+        NULL::text AS unit,
         b.house_number,
         NULL::text AS street,
         ST_Distance(ST_Transform(ST_PointOnSurface(b.geom), 4326)::geography, click.geog) AS distance_meters,
@@ -115,6 +118,7 @@ matches AS (
         p.source,
         p.class,
         p.name,
+        NULL::text AS unit,
         NULL::text AS house_number,
         NULL::text AS street,
         ST_Distance(ST_Transform(p.geom, 4326)::geography, click.geog) AS distance_meters,
@@ -133,6 +137,7 @@ matches AS (
         'place' AS source,
         p.class,
         p.name,
+        NULL::text AS unit,
         NULL::text AS house_number,
         NULL::text AS street,
         ST_Distance(ST_Transform(p.geom, 4326)::geography, click.geog) AS distance_meters,
@@ -151,6 +156,7 @@ matches AS (
         'highway' AS source,
         r.class,
         COALESCE(r.name, r.ref) AS name,
+        NULL::text AS unit,
         NULL::text AS house_number,
         NULL::text AS street,
         ST_Distance(ST_Transform(r.geom, 4326)::geography, click.geog) AS distance_meters,
@@ -170,6 +176,7 @@ matches AS (
         'natural' AS source,
         w.class,
         w.name,
+        NULL::text AS unit,
         NULL::text AS house_number,
         NULL::text AS street,
         0::double precision AS distance_meters,
@@ -189,6 +196,7 @@ matches AS (
         'landuse' AS source,
         l.class,
         l.name,
+        NULL::text AS unit,
         NULL::text AS house_number,
         NULL::text AS street,
         0::double precision AS distance_meters,
@@ -200,7 +208,7 @@ matches AS (
       AND l.geom && click.geom
       AND ST_Intersects(l.geom, click.geom)
 )
-SELECT layer, osm_id, source, class, name, house_number, street, distance_meters, lat, lon
+SELECT layer, osm_id, source, class, name, unit, house_number, street, distance_meters, lat, lon
 FROM matches
 ORDER BY priority, distance_meters, name
 LIMIT $5
@@ -223,6 +231,7 @@ LIMIT $5
                 source: row.try_get("source")?,
                 class: row.try_get("class")?,
                 name: row.try_get("name")?,
+                unit: row.try_get("unit")?,
                 house_number: row.try_get("house_number")?,
                 street: row.try_get("street")?,
                 distance_meters: row.try_get("distance_meters")?,
