@@ -47,6 +47,23 @@ type IdentifyResponse = {
 
 const VECTOR_MIN_ZOOM = 14;
 const MAX_MAP_ZOOM = 18;
+const MAP_VIEW_STORAGE_KEY = 'tileme.map.view.v1';
+
+type StoredMapView = {
+  lng: number;
+  lat: number;
+  zoom: number;
+  bearing: number;
+  pitch: number;
+};
+
+const DEFAULT_MAP_VIEW: StoredMapView = {
+  lng: 133.7751,
+  lat: -25.2744,
+  zoom: 3,
+  bearing: 0,
+  pitch: 0,
+};
 
 function App() {
   const [jobs, setJobs] = createSignal<ImportJob[]>([]);
@@ -231,6 +248,7 @@ function TileMap() {
   onMount(() => {
     const rasterTileUrlTemplate = `${window.location.origin}/raster/{z}/{x}/{y}.png`;
     const vectorTileUrlTemplate = `${window.location.origin}/tiles/{z}/{x}/{y}.pbf`;
+    const initialView = loadStoredMapView();
 
     map = new maplibregl.Map({
       container: containerRef,
@@ -264,8 +282,10 @@ function TileMap() {
           ...mapLayers,
         ],
       },
-      center: [133.7751, -25.2744],
-      zoom: 3,
+      center: [initialView.lng, initialView.lat],
+      zoom: initialView.zoom,
+      bearing: initialView.bearing,
+      pitch: initialView.pitch,
       maxZoom: MAX_MAP_ZOOM,
       attributionControl: false,
     });
@@ -281,16 +301,34 @@ function TileMap() {
         setMapError(message);
       }
     });
+    map.on('moveend', persistCurrentMapView);
+    window.addEventListener('beforeunload', persistCurrentMapView);
 
     onCleanup(() => {
       identifyAbort?.abort();
       identifyMarker?.remove();
+      persistCurrentMapView();
+      window.removeEventListener('beforeunload', persistCurrentMapView);
       map?.remove();
       identifyAbort = null;
       identifyMarker = null;
       map = null;
     });
   });
+
+  function persistCurrentMapView() {
+    if (!map) {
+      return;
+    }
+
+    saveStoredMapView({
+      lng: map.getCenter().lng,
+      lat: map.getCenter().lat,
+      zoom: map.getZoom(),
+      bearing: map.getBearing(),
+      pitch: map.getPitch(),
+    });
+  }
 
   async function identifyPoint(lat: number, lon: number) {
     if (!map) {
@@ -412,6 +450,54 @@ function identifyRadiusMeters(zoom: number) {
     return 85;
   }
   return 150;
+}
+
+function loadStoredMapView(): StoredMapView {
+  try {
+    const rawValue = window.localStorage.getItem(MAP_VIEW_STORAGE_KEY);
+    if (!rawValue) {
+      return DEFAULT_MAP_VIEW;
+    }
+
+    const storedView = JSON.parse(rawValue) as Partial<StoredMapView>;
+    if (!isValidStoredMapView(storedView)) {
+      return DEFAULT_MAP_VIEW;
+    }
+
+    return storedView;
+  } catch {
+    return DEFAULT_MAP_VIEW;
+  }
+}
+
+function saveStoredMapView(view: StoredMapView) {
+  try {
+    window.localStorage.setItem(MAP_VIEW_STORAGE_KEY, JSON.stringify(view));
+  } catch {
+    // Browsers can reject localStorage writes in private mode or when storage is full.
+  }
+}
+
+function isValidStoredMapView(view: Partial<StoredMapView>): view is StoredMapView {
+  return (
+    isFiniteNumber(view.lng) &&
+    isFiniteNumber(view.lat) &&
+    isFiniteNumber(view.zoom) &&
+    isFiniteNumber(view.bearing) &&
+    isFiniteNumber(view.pitch) &&
+    view.lng >= -180 &&
+    view.lng <= 180 &&
+    view.lat >= -90 &&
+    view.lat <= 90 &&
+    view.zoom >= 0 &&
+    view.zoom <= MAX_MAP_ZOOM &&
+    view.pitch >= 0 &&
+    view.pitch <= 85
+  );
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
 }
 
 function formatCoordinate(lat: number, lon: number) {
