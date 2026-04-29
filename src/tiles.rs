@@ -55,6 +55,7 @@ async fn tilejson() -> Json<TileJson> {
             layer("landuse", 8, MAX_ZOOM),
             layer("roads", 5, MAX_ZOOM),
             layer("buildings", 14, MAX_ZOOM),
+            layer("addresses", 16, MAX_ZOOM),
             layer("places", 2, MAX_ZOOM),
             layer("pois", 15, MAX_ZOOM),
             layer("boundaries", 0, MAX_ZOOM),
@@ -69,7 +70,11 @@ fn layer(id: &'static str, minzoom: u8, maxzoom: u8) -> VectorLayer {
             "class": "String",
             "source": "String",
             "name": "String",
+            "house_number": "String",
+            "street": "String",
+            "unit": "String",
             "ref": "String",
+            "height": "Number",
             "admin_level": "Number"
         }),
         minzoom,
@@ -197,10 +202,19 @@ roads AS (
 buildings AS (
     SELECT ST_AsMVT(building_rows, 'buildings', 4096, 'geom') AS mvt
     FROM (
-        SELECT class, height, ST_AsMVTGeom(b.geom, bounds.geom, 4096, 64, true) AS geom
+        SELECT class, name, house_number, height, ST_AsMVTGeom(b.geom, bounds.geom, 4096, 64, true) AS geom
         FROM osm_buildings b, bounds
         WHERE $1 >= 14 AND b.geom && bounds.geom
     ) building_rows
+),
+addresses AS (
+    SELECT ST_AsMVT(address_rows, 'addresses', 4096, 'geom') AS mvt
+    FROM (
+        SELECT name, house_number, street, unit, ST_AsMVTGeom(a.geom, bounds.geom, 4096, 64, true) AS geom
+        FROM osm_addresses a, bounds
+        WHERE $1 >= 16
+          AND a.geom && bounds.geom
+    ) address_rows
 ),
 places AS (
     SELECT ST_AsMVT(place_rows, 'places', 4096, 'geom') AS mvt
@@ -245,6 +259,7 @@ SELECT
     COALESCE((SELECT mvt FROM landuse), '\x'::bytea) ||
     COALESCE((SELECT mvt FROM roads), '\x'::bytea) ||
     COALESCE((SELECT mvt FROM buildings), '\x'::bytea) ||
+    COALESCE((SELECT mvt FROM addresses), '\x'::bytea) ||
     COALESCE((SELECT mvt FROM places), '\x'::bytea) ||
     COALESCE((SELECT mvt FROM pois), '\x'::bytea) ||
     COALESCE((SELECT mvt FROM boundaries), '\x'::bytea) AS mvt

@@ -39,6 +39,8 @@ struct IdentifiedFeature {
     source: Option<String>,
     class: Option<String>,
     name: String,
+    house_number: Option<String>,
+    street: Option<String>,
     distance_meters: f64,
     lat: Option<f64>,
     lon: Option<f64>,
@@ -65,15 +67,60 @@ WITH click AS (
 ),
 matches AS (
     SELECT
+        'address' AS layer,
+        a.osm_id,
+        'address' AS source,
+        NULL::text AS class,
+        COALESCE(a.name, a.house_number) AS name,
+        a.house_number,
+        a.street,
+        ST_Distance(ST_Transform(a.geom, 4326)::geography, click.geog) AS distance_meters,
+        ST_Y(ST_Transform(a.geom, 4326)) AS lat,
+        ST_X(ST_Transform(a.geom, 4326)) AS lon,
+        1 AS priority
+    FROM osm_addresses a, click
+    WHERE a.geom && ST_Expand(click.geom, $3)
+      AND ST_DWithin(ST_Transform(a.geom, 4326)::geography, click.geog, $4)
+
+    UNION ALL
+
+    SELECT
+        'building' AS layer,
+        b.osm_id,
+        'building' AS source,
+        b.class,
+        COALESCE(
+            b.name,
+            b.house_number,
+            CASE
+                WHEN b.class IS NOT NULL AND b.class <> 'yes' THEN initcap(replace(b.class, '_', ' '))
+                ELSE 'Building'
+            END
+        ) AS name,
+        b.house_number,
+        NULL::text AS street,
+        ST_Distance(ST_Transform(ST_PointOnSurface(b.geom), 4326)::geography, click.geog) AS distance_meters,
+        NULL::double precision AS lat,
+        NULL::double precision AS lon,
+        2 AS priority
+    FROM osm_buildings b, click
+    WHERE b.geom && ST_Expand(click.geom, $3)
+      AND ST_DWithin(ST_Transform(ST_PointOnSurface(b.geom), 4326)::geography, click.geog, $4)
+
+    UNION ALL
+
+    SELECT
         'poi' AS layer,
         p.osm_id,
         p.source,
         p.class,
         p.name,
+        NULL::text AS house_number,
+        NULL::text AS street,
         ST_Distance(ST_Transform(p.geom, 4326)::geography, click.geog) AS distance_meters,
         ST_Y(ST_Transform(p.geom, 4326)) AS lat,
         ST_X(ST_Transform(p.geom, 4326)) AS lon,
-        1 AS priority
+        3 AS priority
     FROM osm_pois p, click
     WHERE p.geom && ST_Expand(click.geom, $3)
       AND ST_DWithin(ST_Transform(p.geom, 4326)::geography, click.geog, $4)
@@ -86,10 +133,12 @@ matches AS (
         'place' AS source,
         p.class,
         p.name,
+        NULL::text AS house_number,
+        NULL::text AS street,
         ST_Distance(ST_Transform(p.geom, 4326)::geography, click.geog) AS distance_meters,
         ST_Y(ST_Transform(p.geom, 4326)) AS lat,
         ST_X(ST_Transform(p.geom, 4326)) AS lon,
-        2 AS priority
+        4 AS priority
     FROM osm_places p, click
     WHERE p.geom && ST_Expand(click.geom, $3)
       AND ST_DWithin(ST_Transform(p.geom, 4326)::geography, click.geog, $4)
@@ -102,10 +151,12 @@ matches AS (
         'highway' AS source,
         r.class,
         COALESCE(r.name, r.ref) AS name,
+        NULL::text AS house_number,
+        NULL::text AS street,
         ST_Distance(ST_Transform(r.geom, 4326)::geography, click.geog) AS distance_meters,
         NULL::double precision AS lat,
         NULL::double precision AS lon,
-        3 AS priority
+        5 AS priority
     FROM osm_roads r, click
     WHERE COALESCE(r.name, r.ref) IS NOT NULL
       AND r.geom && ST_Expand(click.geom, $3)
@@ -119,10 +170,12 @@ matches AS (
         'natural' AS source,
         w.class,
         w.name,
+        NULL::text AS house_number,
+        NULL::text AS street,
         0::double precision AS distance_meters,
         NULL::double precision AS lat,
         NULL::double precision AS lon,
-        4 AS priority
+        6 AS priority
     FROM osm_water w, click
     WHERE w.name IS NOT NULL
       AND w.geom && click.geom
@@ -136,16 +189,18 @@ matches AS (
         'landuse' AS source,
         l.class,
         l.name,
+        NULL::text AS house_number,
+        NULL::text AS street,
         0::double precision AS distance_meters,
         NULL::double precision AS lat,
         NULL::double precision AS lon,
-        5 AS priority
+        7 AS priority
     FROM osm_landuse l, click
     WHERE l.name IS NOT NULL
       AND l.geom && click.geom
       AND ST_Intersects(l.geom, click.geom)
 )
-SELECT layer, osm_id, source, class, name, distance_meters, lat, lon
+SELECT layer, osm_id, source, class, name, house_number, street, distance_meters, lat, lon
 FROM matches
 ORDER BY priority, distance_meters, name
 LIMIT $5
@@ -168,6 +223,8 @@ LIMIT $5
                 source: row.try_get("source")?,
                 class: row.try_get("class")?,
                 name: row.try_get("name")?,
+                house_number: row.try_get("house_number")?,
+                street: row.try_get("street")?,
                 distance_meters: row.try_get("distance_meters")?,
                 lat: row.try_get("lat")?,
                 lon: row.try_get("lon")?,

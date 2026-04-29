@@ -460,7 +460,7 @@ async fn prepare_database_for_replace(pool: &PgPool) -> Result<()> {
     sqlx::query("DROP MATERIALIZED VIEW IF EXISTS gen_water_z6_8")
         .execute(pool)
         .await?;
-    sqlx::query("DROP TABLE IF EXISTS osm_roads, osm_water, osm_landuse, osm_buildings, osm_places, osm_pois, osm_boundaries CASCADE")
+    sqlx::query("DROP TABLE IF EXISTS osm_roads, osm_water, osm_landuse, osm_buildings, osm_addresses, osm_places, osm_pois, osm_boundaries CASCADE")
         .execute(pool)
         .await?;
     Ok(())
@@ -474,6 +474,8 @@ async fn post_import_database_setup(pool: &PgPool) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS osm_landuse_geom_idx ON osm_landuse USING gist (geom)",
         "CREATE INDEX IF NOT EXISTS osm_landuse_class_idx ON osm_landuse (class)",
         "CREATE INDEX IF NOT EXISTS osm_buildings_geom_idx ON osm_buildings USING gist (geom)",
+        "CREATE INDEX IF NOT EXISTS osm_addresses_geom_idx ON osm_addresses USING gist (geom)",
+        "CREATE INDEX IF NOT EXISTS osm_addresses_house_number_idx ON osm_addresses (house_number)",
         "CREATE INDEX IF NOT EXISTS osm_places_geom_idx ON osm_places USING gist (geom)",
         "CREATE INDEX IF NOT EXISTS osm_places_class_idx ON osm_places (class)",
         "CREATE INDEX IF NOT EXISTS osm_pois_geom_idx ON osm_pois USING gist (geom)",

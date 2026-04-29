@@ -33,6 +33,8 @@ type IdentifiedFeature = {
   source: string | null;
   class: string | null;
   name: string;
+  house_number: string | null;
+  street: string | null;
   distance_meters: number;
   lat: number | null;
   lon: number | null;
@@ -439,7 +441,7 @@ function TileMap() {
             </div>
 
             <Show when={isIdentifying()}>
-              <p class="identifyStatus">Looking up nearby names</p>
+              <p class="identifyStatus">Looking up nearby map features</p>
             </Show>
 
             <Show when={identifyError()}>
@@ -450,7 +452,7 @@ function TileMap() {
               when={!isIdentifying() && !identifyError() && result().features.length > 0}
               fallback={
                 <Show when={!isIdentifying() && !identifyError()}>
-                  <p class="emptyState">No named POIs found within {formatMeters(result().radius_meters)}.</p>
+                  <p class="emptyState">No mapped features found within {formatMeters(result().radius_meters)}.</p>
                 </Show>
               }
             >
@@ -541,7 +543,9 @@ function formatCoordinate(lat: number, lon: number) {
 }
 
 function featureLabel(feature: IdentifiedFeature) {
-  return [feature.layer, feature.source, feature.class].filter(Boolean).join(' / ');
+  return [feature.house_number, feature.street, feature.layer, feature.source, feature.class]
+    .filter(Boolean)
+    .join(' / ');
 }
 
 function formatMeters(value: number) {
@@ -617,6 +621,45 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     'source-layer': 'buildings',
     minzoom: 14,
     paint: { 'fill-color': '#c6a889', 'fill-opacity': 0.76 },
+  },
+  {
+    id: 'building-labels',
+    type: 'symbol',
+    source: 'tileme',
+    'source-layer': 'buildings',
+    minzoom: 17,
+    filter: ['any', ['has', 'house_number'], ['has', 'name']],
+    layout: {
+      'text-field': ['coalesce', ['get', 'house_number'], ['get', 'name']],
+      'text-font': ['Noto Sans Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 17, 10, 18, 12],
+      'text-allow-overlap': false,
+    },
+    paint: {
+      'text-color': '#5f4938',
+      'text-halo-color': '#fff6ea',
+      'text-halo-width': 1,
+    },
+  },
+  {
+    id: 'address-labels',
+    type: 'symbol',
+    source: 'tileme',
+    'source-layer': 'addresses',
+    minzoom: 16,
+    filter: ['has', 'house_number'],
+    layout: {
+      'text-field': ['get', 'house_number'],
+      'text-font': ['Noto Sans Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 16, 10, 18, 12],
+      'text-anchor': 'center',
+      'text-allow-overlap': false,
+    },
+    paint: {
+      'text-color': '#6a5140',
+      'text-halo-color': '#fff7ee',
+      'text-halo-width': 1,
+    },
   },
   {
     id: 'water-labels',

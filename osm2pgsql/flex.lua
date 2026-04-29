@@ -28,8 +28,19 @@ local landuse = osm2pgsql.define_area_table('osm_landuse', {
 local buildings = osm2pgsql.define_area_table('osm_buildings', {
   { column = 'osm_id', type = 'bigint' },
   { column = 'class', type = 'text' },
+  { column = 'name', type = 'text' },
+  { column = 'house_number', type = 'text' },
   { column = 'height', type = 'real' },
   { column = 'geom', type = 'multipolygon', projection = srid },
+})
+
+local addresses = osm2pgsql.define_node_table('osm_addresses', {
+  { column = 'osm_id', type = 'bigint' },
+  { column = 'name', type = 'text' },
+  { column = 'house_number', type = 'text' },
+  { column = 'street', type = 'text' },
+  { column = 'unit', type = 'text' },
+  { column = 'geom', type = 'point', projection = srid },
 })
 
 local places = osm2pgsql.define_node_table('osm_places', {
@@ -177,6 +188,8 @@ function osm2pgsql.process_way(object)
     buildings:insert({
       osm_id = object.id,
       class = object.tags.building,
+      name = object.tags.name,
+      house_number = object.tags["addr:housenumber"],
       height = parse_height(object.tags.height),
       geom = object:as_multipolygon()
     })
@@ -194,6 +207,17 @@ function osm2pgsql.process_way(object)
 end
 
 function osm2pgsql.process_node(object)
+  if object.tags["addr:housenumber"] then
+    addresses:insert({
+      osm_id = object.id,
+      name = object.tags.name,
+      house_number = object.tags["addr:housenumber"],
+      street = object.tags["addr:street"],
+      unit = object.tags["addr:unit"],
+      geom = object:as_point()
+    })
+  end
+
   local place = object.tags.place
   if place and object.tags.name then
     places:insert({
