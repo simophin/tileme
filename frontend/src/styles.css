@@ -105,6 +105,12 @@ button:disabled {
   font-size: 13px;
 }
 
+.identifyAddress {
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .identifyStatus {
   color: #4c5a54;
   font-size: 13px;

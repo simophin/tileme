@@ -74,6 +74,10 @@ CREATE TABLE osm_addresses (
     house_number text NOT NULL,
     street text,
     unit text,
+    suburb text,
+    city text,
+    state text,
+    postcode text,
     geom geometry(Point, 3857) NOT NULL
 );
 

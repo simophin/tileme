@@ -42,6 +42,7 @@ Useful endpoints:
 GET  /healthz
 GET  /readyz
 GET  /metrics
+GET  /address_lookup
 GET  /tiles.json
 GET  /tiles/{z}/{x}/{y}.pbf
 POST /imports

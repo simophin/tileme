@@ -40,6 +40,10 @@ local addresses = osm2pgsql.define_node_table('osm_addresses', {
   { column = 'house_number', type = 'text' },
   { column = 'street', type = 'text' },
   { column = 'unit', type = 'text' },
+  { column = 'suburb', type = 'text' },
+  { column = 'city', type = 'text' },
+  { column = 'state', type = 'text' },
+  { column = 'postcode', type = 'text' },
   { column = 'geom', type = 'point', projection = srid },
 })
 
@@ -214,6 +218,10 @@ function osm2pgsql.process_node(object)
       house_number = object.tags["addr:housenumber"],
       street = object.tags["addr:street"],
       unit = object.tags["addr:unit"],
+      suburb = object.tags["addr:suburb"],
+      city = object.tags["addr:city"],
+      state = object.tags["addr:state"],
+      postcode = object.tags["addr:postcode"],
       geom = object:as_point()
     })
   end

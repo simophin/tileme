@@ -152,6 +152,7 @@ function TileMap() {
     let map = null;
     let identifyMarker = null;
     let identifyAbort = null;
+    let addressLookupAbort = null;
     let pendingLongPressTimeout = null;
     let resizeObserver = null;
     let activeLongPressPointerId = null;
@@ -162,6 +163,9 @@ function TileMap() {
     const [identifyResult, setIdentifyResult] = createSignal(null);
     const [identifyError, setIdentifyError] = createSignal(null);
     const [isIdentifying, setIsIdentifying] = createSignal(false);
+    const [addressResult, setAddressResult] = createSignal(null);
+    const [addressError, setAddressError] = createSignal(null);
+    const [isLookingUpAddress, setIsLookingUpAddress] = createSignal(false);
     onMount(() => {
         const vectorTileUrlTemplate = `${window.location.origin}/tiles/{z}/{x}/{y}.pbf`;
         const initialView = loadStoredMapView();
@@ -217,6 +221,7 @@ function TileMap() {
         onCleanup(() => {
             cancelPendingLongPress();
             identifyAbort?.abort();
+            addressLookupAbort?.abort();
             identifyMarker?.remove();
             resizeObserver?.disconnect();
             persistCurrentMapView();
@@ -229,6 +234,7 @@ function TileMap() {
             window.removeEventListener('beforeunload', persistCurrentMapView);
             map?.remove();
             identifyAbort = null;
+            addressLookupAbort = null;
             identifyMarker = null;
             resizeObserver = null;
             map = null;
@@ -295,7 +301,7 @@ function TileMap() {
             return;
         }
         const target = event.target;
-        if (panelRef?.contains(target)) {
+        if (panelRef?.contains(target ?? null)) {
             return;
         }
         clearIdentify();
@@ -317,8 +323,11 @@ function TileMap() {
             return;
         }
         identifyAbort?.abort();
+        addressLookupAbort?.abort();
         const controller = new AbortController();
+        const addressController = new AbortController();
         identifyAbort = controller;
+        addressLookupAbort = addressController;
         identifyMarker?.remove();
         identifyMarker = new maplibregl.Marker({ color: '#2f6f88' }).setLngLat([lon, lat]).addTo(map);
         setIdentifyResult({
@@ -327,13 +336,17 @@ function TileMap() {
             radius_meters: identifyRadiusMeters(map.getZoom()),
             features: [],
         });
+        setAddressResult(null);
+        setAddressError(null);
         setIdentifyError(null);
         setIsIdentifying(true);
+        setIsLookingUpAddress(true);
         const params = new URLSearchParams({
             lat: lat.toFixed(7),
             lon: lon.toFixed(7),
             radius_meters: identifyRadiusMeters(map.getZoom()).toFixed(0),
         });
+        void lookupAddress(lat, lon, addressController);
         try {
             const response = await fetch(`/identify?${params}`, { signal: controller.signal });
             if (!response.ok) {
@@ -353,14 +366,44 @@ function TileMap() {
             }
         }
     }
+    async function lookupAddress(lat, lon, controller) {
+        const params = new URLSearchParams({
+            lat: lat.toFixed(7),
+            lon: lon.toFixed(7),
+        });
+        try {
+            const response = await fetch(`/address_lookup?${params}`, { signal: controller.signal });
+            if (!response.ok) {
+                throw new Error(await readApiError(response));
+            }
+            setAddressResult((await response.json()));
+            setAddressError(null);
+        }
+        catch (error) {
+            if (controller.signal.aborted) {
+                return;
+            }
+            setAddressError(error instanceof Error ? error.message : 'Unable to look up address');
+        }
+        finally {
+            if (addressLookupAbort === controller) {
+                setIsLookingUpAddress(false);
+            }
+        }
+    }
     function clearIdentify() {
         identifyAbort?.abort();
+        addressLookupAbort?.abort();
         identifyAbort = null;
+        addressLookupAbort = null;
         identifyMarker?.remove();
         identifyMarker = null;
         setIdentifyResult(null);
+        setAddressResult(null);
+        setAddressError(null);
         setIdentifyError(null);
         setIsIdentifying(false);
+        setIsLookingUpAddress(false);
     }
     return (<>
       <div ref={containerRef} class="map"/>
@@ -371,6 +414,9 @@ function TileMap() {
               <div>
                 <h2>Point</h2>
                 <p>{formatCoordinate(result().lat, result().lon)}</p>
+                <Show when={addressResult()?.address}>
+                  {(address) => <p class="identifyAddress">{address().formatted_address}</p>}
+                </Show>
               </div>
               <button type="button" class="iconButton" onClick={clearIdentify}>
                 Close
@@ -381,18 +427,30 @@ function TileMap() {
               <p class="identifyStatus">Looking up nearby map features</p>
             </Show>
 
+            <Show when={isLookingUpAddress()}>
+              <p class="identifyStatus">Looking up nearest address</p>
+            </Show>
+
             <Show when={identifyError()}>
               {(error) => <p class="errorText">{error()}</p>}
             </Show>
 
-            <Show when={!isIdentifying() && !identifyError() && result().features.length > 0} fallback={<Show when={!isIdentifying() && !identifyError()}>
-                  <p class="emptyState">No mapped features found within {formatMeters(result().radius_meters)}.</p>
+            <Show when={addressError()}>
+              {(error) => <p class="errorText">{error()}</p>}
+            </Show>
+
+            <Show when={!isIdentifying() && !identifyError() && result().features.length > 0} fallback={<Show when={!isIdentifying() && !identifyError() && !isLookingUpAddress()}>
+                  <p class="emptyState">
+                    <Show when={addressResult()?.address} fallback={`No mapped features found within ${formatMeters(result().radius_meters)}.`}>
+                      No mapped features found near this point.
+                    </Show>
+                  </p>
                 </Show>}>
               <div class="identifyList">
                 <For each={result().features}>
                   {(feature) => (<article class="identifyItem">
                       <div>
-                        <strong>{featureTitle(feature)}</strong>
+                        <strong>{feature.name}</strong>
                         <span>{featureLabel(feature)}</span>
                       </div>
                       <small>{formatMeters(feature.distance_meters)}</small>
@@ -462,16 +520,7 @@ function formatCoordinate(lat, lon) {
     return `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
 }
 function featureLabel(feature) {
-    const addressNumber = feature.unit && feature.house_number ? `${feature.unit}/${feature.house_number}` : feature.house_number;
-    return [addressNumber, feature.street, feature.layer, feature.source, feature.class]
-        .filter(Boolean)
-        .join(' / ');
-}
-function featureTitle(feature) {
-    if (feature.layer === 'address' && feature.house_number) {
-        return feature.unit ? `${feature.unit}/${feature.house_number}` : feature.house_number;
-    }
-    return feature.name;
+    return [feature.layer, feature.source, feature.class].filter(Boolean).join(' / ');
 }
 function formatMeters(value) {
     if (value < 1) {

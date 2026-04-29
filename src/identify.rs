@@ -13,12 +13,17 @@ const DEFAULT_RADIUS_METERS: f64 = 35.0;
 const MAX_RADIUS_METERS: f64 = 250.0;
 const MAX_RESULTS: i64 = 20;
 
+const DEFAULT_ADDRESS_LOOKUP_RADIUS_METERS: f64 = 250.0;
+const MAX_ADDRESS_LOOKUP_RADIUS_METERS: f64 = 1_000.0;
+
 pub fn router() -> axum::Router<Arc<AppState>> {
-    axum::Router::new().route("/identify", get(identify))
+    axum::Router::new()
+        .route("/identify", get(identify))
+        .route("/address_lookup", get(address_lookup))
 }
 
 #[derive(Debug, Deserialize)]
-struct IdentifyQuery {
+struct CoordinateQuery {
     lat: f64,
     lon: f64,
     radius_meters: Option<f64>,
@@ -39,17 +44,38 @@ struct IdentifiedFeature {
     source: Option<String>,
     class: Option<String>,
     name: String,
-    unit: Option<String>,
-    house_number: Option<String>,
-    street: Option<String>,
     distance_meters: f64,
     lat: Option<f64>,
     lon: Option<f64>,
 }
 
+#[derive(Debug, Serialize)]
+struct AddressLookupResponse {
+    lat: f64,
+    lon: f64,
+    radius_meters: f64,
+    address: Option<ResolvedAddress>,
+}
+
+#[derive(Debug, Serialize)]
+struct ResolvedAddress {
+    osm_id: i64,
+    formatted_address: String,
+    unit: Option<String>,
+    house_number: String,
+    street: Option<String>,
+    suburb: Option<String>,
+    city: Option<String>,
+    state: Option<String>,
+    postcode: Option<String>,
+    distance_meters: f64,
+    lat: f64,
+    lon: f64,
+}
+
 async fn identify(
     State(state): State<Arc<AppState>>,
-    Query(query): Query<IdentifyQuery>,
+    Query(query): Query<CoordinateQuery>,
 ) -> Result<Json<IdentifyResponse>, AppError> {
     validate_coordinate(query.lat, query.lon)?;
 
@@ -68,44 +94,19 @@ WITH click AS (
 ),
 matches AS (
     SELECT
-        'address' AS layer,
-        a.osm_id,
-        'address' AS source,
-        NULL::text AS class,
-        COALESCE(a.name, a.house_number) AS name,
-        a.unit,
-        a.house_number,
-        a.street,
-        ST_Distance(ST_Transform(a.geom, 4326)::geography, click.geog) AS distance_meters,
-        ST_Y(ST_Transform(a.geom, 4326)) AS lat,
-        ST_X(ST_Transform(a.geom, 4326)) AS lon,
-        1 AS priority
-    FROM osm_addresses a, click
-    WHERE a.geom && ST_Expand(click.geom, $3)
-      AND ST_DWithin(ST_Transform(a.geom, 4326)::geography, click.geog, $4)
-
-    UNION ALL
-
-    SELECT
         'building' AS layer,
         b.osm_id,
         'building' AS source,
         b.class,
-        COALESCE(
-            b.name,
-            b.house_number,
-            CASE
-                WHEN b.class IS NOT NULL AND b.class <> 'yes' THEN initcap(replace(b.class, '_', ' '))
-                ELSE 'Building'
-            END
-        ) AS name,
-        NULL::text AS unit,
-        b.house_number,
-        NULL::text AS street,
+        CASE
+            WHEN b.name IS NOT NULL AND b.name <> '' THEN b.name
+            WHEN b.class IS NOT NULL AND b.class <> 'yes' THEN initcap(replace(b.class, '_', ' '))
+            ELSE 'Building'
+        END AS name,
         ST_Distance(ST_Transform(ST_PointOnSurface(b.geom), 4326)::geography, click.geog) AS distance_meters,
         NULL::double precision AS lat,
         NULL::double precision AS lon,
-        2 AS priority
+        1 AS priority
     FROM osm_buildings b, click
     WHERE b.geom && ST_Expand(click.geom, $3)
       AND ST_DWithin(ST_Transform(ST_PointOnSurface(b.geom), 4326)::geography, click.geog, $4)
@@ -118,13 +119,10 @@ matches AS (
         p.source,
         p.class,
         p.name,
-        NULL::text AS unit,
-        NULL::text AS house_number,
-        NULL::text AS street,
         ST_Distance(ST_Transform(p.geom, 4326)::geography, click.geog) AS distance_meters,
         ST_Y(ST_Transform(p.geom, 4326)) AS lat,
         ST_X(ST_Transform(p.geom, 4326)) AS lon,
-        3 AS priority
+        2 AS priority
     FROM osm_pois p, click
     WHERE p.geom && ST_Expand(click.geom, $3)
       AND ST_DWithin(ST_Transform(p.geom, 4326)::geography, click.geog, $4)
@@ -137,13 +135,10 @@ matches AS (
         'place' AS source,
         p.class,
         p.name,
-        NULL::text AS unit,
-        NULL::text AS house_number,
-        NULL::text AS street,
         ST_Distance(ST_Transform(p.geom, 4326)::geography, click.geog) AS distance_meters,
         ST_Y(ST_Transform(p.geom, 4326)) AS lat,
         ST_X(ST_Transform(p.geom, 4326)) AS lon,
-        4 AS priority
+        3 AS priority
     FROM osm_places p, click
     WHERE p.geom && ST_Expand(click.geom, $3)
       AND ST_DWithin(ST_Transform(p.geom, 4326)::geography, click.geog, $4)
@@ -156,13 +151,10 @@ matches AS (
         'highway' AS source,
         r.class,
         COALESCE(r.name, r.ref) AS name,
-        NULL::text AS unit,
-        NULL::text AS house_number,
-        NULL::text AS street,
         ST_Distance(ST_Transform(r.geom, 4326)::geography, click.geog) AS distance_meters,
         NULL::double precision AS lat,
         NULL::double precision AS lon,
-        5 AS priority
+        4 AS priority
     FROM osm_roads r, click
     WHERE COALESCE(r.name, r.ref) IS NOT NULL
       AND r.geom && ST_Expand(click.geom, $3)
@@ -176,13 +168,10 @@ matches AS (
         'natural' AS source,
         w.class,
         w.name,
-        NULL::text AS unit,
-        NULL::text AS house_number,
-        NULL::text AS street,
         0::double precision AS distance_meters,
         NULL::double precision AS lat,
         NULL::double precision AS lon,
-        6 AS priority
+        5 AS priority
     FROM osm_water w, click
     WHERE w.name IS NOT NULL
       AND w.geom && click.geom
@@ -196,19 +185,16 @@ matches AS (
         'landuse' AS source,
         l.class,
         l.name,
-        NULL::text AS unit,
-        NULL::text AS house_number,
-        NULL::text AS street,
         0::double precision AS distance_meters,
         NULL::double precision AS lat,
         NULL::double precision AS lon,
-        7 AS priority
+        6 AS priority
     FROM osm_landuse l, click
     WHERE l.name IS NOT NULL
       AND l.geom && click.geom
       AND ST_Intersects(l.geom, click.geom)
 )
-SELECT layer, osm_id, source, class, name, unit, house_number, street, distance_meters, lat, lon
+SELECT layer, osm_id, source, class, name, distance_meters, lat, lon
 FROM matches
 ORDER BY priority, distance_meters, name
 LIMIT $5
@@ -231,9 +217,6 @@ LIMIT $5
                 source: row.try_get("source")?,
                 class: row.try_get("class")?,
                 name: row.try_get("name")?,
-                unit: row.try_get("unit")?,
-                house_number: row.try_get("house_number")?,
-                street: row.try_get("street")?,
                 distance_meters: row.try_get("distance_meters")?,
                 lat: row.try_get("lat")?,
                 lon: row.try_get("lon")?,
@@ -246,6 +229,92 @@ LIMIT $5
         lon: query.lon,
         radius_meters,
         features,
+    }))
+}
+
+async fn address_lookup(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<CoordinateQuery>,
+) -> Result<Json<AddressLookupResponse>, AppError> {
+    validate_coordinate(query.lat, query.lon)?;
+
+    let radius_meters = query
+        .radius_meters
+        .unwrap_or(DEFAULT_ADDRESS_LOOKUP_RADIUS_METERS)
+        .clamp(1.0, MAX_ADDRESS_LOOKUP_RADIUS_METERS);
+    let projected_radius = radius_meters / query.lat.to_radians().cos().abs().max(0.2);
+
+    let address_row = sqlx::query(
+        r#"
+WITH click AS (
+    SELECT
+        ST_Transform(ST_SetSRID(ST_MakePoint($1, $2), 4326), 3857) AS geom,
+        ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography AS geog
+)
+SELECT
+    a.osm_id,
+    concat_ws(
+        ', ',
+        concat_ws(
+            ' ',
+            CASE
+                WHEN a.unit IS NOT NULL AND a.unit <> '' THEN a.unit || '/' || a.house_number
+                ELSE a.house_number
+            END,
+            a.street
+        ),
+        a.suburb,
+        a.city,
+        concat_ws(' ', a.state, a.postcode)
+    ) AS formatted_address,
+    a.unit,
+    a.house_number,
+    a.street,
+    a.suburb,
+    a.city,
+    a.state,
+    a.postcode,
+    ST_Distance(ST_Transform(a.geom, 4326)::geography, click.geog) AS distance_meters,
+    ST_Y(ST_Transform(a.geom, 4326)) AS lat,
+    ST_X(ST_Transform(a.geom, 4326)) AS lon
+FROM osm_addresses a, click
+WHERE a.geom && ST_Expand(click.geom, $3)
+  AND ST_DWithin(ST_Transform(a.geom, 4326)::geography, click.geog, $4)
+ORDER BY distance_meters, a.house_number, a.street
+LIMIT 1
+"#,
+    )
+    .bind(query.lon)
+    .bind(query.lat)
+    .bind(projected_radius)
+    .bind(radius_meters)
+    .fetch_optional(&state.pool)
+    .await?;
+
+    let address = if let Some(row) = address_row {
+        Some(ResolvedAddress {
+            osm_id: row.try_get("osm_id")?,
+            formatted_address: row.try_get("formatted_address")?,
+            unit: row.try_get("unit")?,
+            house_number: row.try_get("house_number")?,
+            street: row.try_get("street")?,
+            suburb: row.try_get("suburb")?,
+            city: row.try_get("city")?,
+            state: row.try_get("state")?,
+            postcode: row.try_get("postcode")?,
+            distance_meters: row.try_get("distance_meters")?,
+            lat: row.try_get("lat")?,
+            lon: row.try_get("lon")?,
+        })
+    } else {
+        None
+    };
+
+    Ok(Json(AddressLookupResponse {
+        lat: query.lat,
+        lon: query.lon,
+        radius_meters,
+        address,
     }))
 }
 

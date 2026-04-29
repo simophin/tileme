@@ -33,9 +33,6 @@ type IdentifiedFeature = {
   source: string | null;
   class: string | null;
   name: string;
-  unit: string | null;
-  house_number: string | null;
-  street: string | null;
   distance_meters: number;
   lat: number | null;
   lon: number | null;
@@ -46,6 +43,28 @@ type IdentifyResponse = {
   lon: number;
   radius_meters: number;
   features: IdentifiedFeature[];
+};
+
+type ResolvedAddress = {
+  osm_id: number;
+  formatted_address: string;
+  unit: string | null;
+  house_number: string;
+  street: string | null;
+  suburb: string | null;
+  city: string | null;
+  state: string | null;
+  postcode: string | null;
+  distance_meters: number;
+  lat: number;
+  lon: number;
+};
+
+type AddressLookupResponse = {
+  lat: number;
+  lon: number;
+  radius_meters: number;
+  address: ResolvedAddress | null;
 };
 
 const MAX_MAP_ZOOM = 18;
@@ -246,6 +265,7 @@ function TileMap() {
   let map: Map | null = null;
   let identifyMarker: maplibregl.Marker | null = null;
   let identifyAbort: AbortController | null = null;
+  let addressLookupAbort: AbortController | null = null;
   let pendingLongPressTimeout: number | null = null;
   let resizeObserver: ResizeObserver | null = null;
   let activeLongPressPointerId: number | null = null;
@@ -256,6 +276,9 @@ function TileMap() {
   const [identifyResult, setIdentifyResult] = createSignal<IdentifyResponse | null>(null);
   const [identifyError, setIdentifyError] = createSignal<string | null>(null);
   const [isIdentifying, setIsIdentifying] = createSignal(false);
+  const [addressResult, setAddressResult] = createSignal<AddressLookupResponse | null>(null);
+  const [addressError, setAddressError] = createSignal<string | null>(null);
+  const [isLookingUpAddress, setIsLookingUpAddress] = createSignal(false);
 
   onMount(() => {
     const vectorTileUrlTemplate = `${window.location.origin}/tiles/{z}/{x}/{y}.pbf`;
@@ -318,6 +341,7 @@ function TileMap() {
     onCleanup(() => {
       cancelPendingLongPress();
       identifyAbort?.abort();
+      addressLookupAbort?.abort();
       identifyMarker?.remove();
       resizeObserver?.disconnect();
       persistCurrentMapView();
@@ -330,6 +354,7 @@ function TileMap() {
       window.removeEventListener('beforeunload', persistCurrentMapView);
       map?.remove();
       identifyAbort = null;
+      addressLookupAbort = null;
       identifyMarker = null;
       resizeObserver = null;
       map = null;
@@ -436,8 +461,11 @@ function TileMap() {
     }
 
     identifyAbort?.abort();
+    addressLookupAbort?.abort();
     const controller = new AbortController();
+    const addressController = new AbortController();
     identifyAbort = controller;
+    addressLookupAbort = addressController;
 
     identifyMarker?.remove();
     identifyMarker = new maplibregl.Marker({ color: '#2f6f88' }).setLngLat([lon, lat]).addTo(map);
@@ -448,14 +476,19 @@ function TileMap() {
       radius_meters: identifyRadiusMeters(map.getZoom()),
       features: [],
     });
+    setAddressResult(null);
+    setAddressError(null);
     setIdentifyError(null);
     setIsIdentifying(true);
+    setIsLookingUpAddress(true);
 
     const params = new URLSearchParams({
       lat: lat.toFixed(7),
       lon: lon.toFixed(7),
       radius_meters: identifyRadiusMeters(map.getZoom()).toFixed(0),
     });
+
+    void lookupAddress(lat, lon, addressController);
 
     try {
       const response = await fetch(`/identify?${params}`, { signal: controller.signal });
@@ -475,14 +508,44 @@ function TileMap() {
     }
   }
 
+  async function lookupAddress(lat: number, lon: number, controller: AbortController) {
+    const params = new URLSearchParams({
+      lat: lat.toFixed(7),
+      lon: lon.toFixed(7),
+    });
+
+    try {
+      const response = await fetch(`/address_lookup?${params}`, { signal: controller.signal });
+      if (!response.ok) {
+        throw new Error(await readApiError(response));
+      }
+      setAddressResult((await response.json()) as AddressLookupResponse);
+      setAddressError(null);
+    } catch (error) {
+      if (controller.signal.aborted) {
+        return;
+      }
+      setAddressError(error instanceof Error ? error.message : 'Unable to look up address');
+    } finally {
+      if (addressLookupAbort === controller) {
+        setIsLookingUpAddress(false);
+      }
+    }
+  }
+
   function clearIdentify() {
     identifyAbort?.abort();
+    addressLookupAbort?.abort();
     identifyAbort = null;
+    addressLookupAbort = null;
     identifyMarker?.remove();
     identifyMarker = null;
     setIdentifyResult(null);
+    setAddressResult(null);
+    setAddressError(null);
     setIdentifyError(null);
     setIsIdentifying(false);
+    setIsLookingUpAddress(false);
   }
 
   return (
@@ -496,6 +559,9 @@ function TileMap() {
               <div>
                 <h2>Point</h2>
                 <p>{formatCoordinate(result().lat, result().lon)}</p>
+                <Show when={addressResult()?.address}>
+                  {(address) => <p class="identifyAddress">{address().formatted_address}</p>}
+                </Show>
               </div>
               <button type="button" class="iconButton" onClick={clearIdentify}>
                 Close
@@ -506,15 +572,30 @@ function TileMap() {
               <p class="identifyStatus">Looking up nearby map features</p>
             </Show>
 
+            <Show when={isLookingUpAddress()}>
+              <p class="identifyStatus">Looking up nearest address</p>
+            </Show>
+
             <Show when={identifyError()}>
+              {(error) => <p class="errorText">{error()}</p>}
+            </Show>
+
+            <Show when={addressError()}>
               {(error) => <p class="errorText">{error()}</p>}
             </Show>
 
             <Show
               when={!isIdentifying() && !identifyError() && result().features.length > 0}
               fallback={
-                <Show when={!isIdentifying() && !identifyError()}>
-                  <p class="emptyState">No mapped features found within {formatMeters(result().radius_meters)}.</p>
+                <Show when={!isIdentifying() && !identifyError() && !isLookingUpAddress()}>
+                  <p class="emptyState">
+                    <Show
+                      when={addressResult()?.address}
+                      fallback={`No mapped features found within ${formatMeters(result().radius_meters)}.`}
+                    >
+                      No mapped features found near this point.
+                    </Show>
+                  </p>
                 </Show>
               }
             >
@@ -523,7 +604,7 @@ function TileMap() {
                   {(feature) => (
                     <article class="identifyItem">
                       <div>
-                        <strong>{featureTitle(feature)}</strong>
+                        <strong>{feature.name}</strong>
                         <span>{featureLabel(feature)}</span>
                       </div>
                       <small>{formatMeters(feature.distance_meters)}</small>
@@ -605,20 +686,7 @@ function formatCoordinate(lat: number, lon: number) {
 }
 
 function featureLabel(feature: IdentifiedFeature) {
-  const addressNumber =
-    feature.unit && feature.house_number ? `${feature.unit}/${feature.house_number}` : feature.house_number;
-
-  return [addressNumber, feature.street, feature.layer, feature.source, feature.class]
-    .filter(Boolean)
-    .join(' / ');
-}
-
-function featureTitle(feature: IdentifiedFeature) {
-  if (feature.layer === 'address' && feature.house_number) {
-    return feature.unit ? `${feature.unit}/${feature.house_number}` : feature.house_number;
-  }
-
-  return feature.name;
+  return [feature.layer, feature.source, feature.class].filter(Boolean).join(' / ');
 }
 
 function formatMeters(value: number) {
