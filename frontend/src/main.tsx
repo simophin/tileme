@@ -48,6 +48,8 @@ type IdentifyResponse = {
 const VECTOR_MIN_ZOOM = 14;
 const MAX_MAP_ZOOM = 18;
 const MAP_VIEW_STORAGE_KEY = 'tileme.map.view.v1';
+const IDENTIFY_CLICK_DELAY_MS = 280;
+const IDENTIFY_ZOOM_SUPPRESS_MS = 450;
 
 type StoredMapView = {
   lng: number;
@@ -240,6 +242,8 @@ function TileMap() {
   let map: Map | null = null;
   let identifyMarker: maplibregl.Marker | null = null;
   let identifyAbort: AbortController | null = null;
+  let pendingIdentifyTimeout: number | null = null;
+  let lastZoomIntentAt = 0;
   const [mapError, setMapError] = createSignal<string | null>(null);
   const [identifyResult, setIdentifyResult] = createSignal<IdentifyResponse | null>(null);
   const [identifyError, setIdentifyError] = createSignal<string | null>(null);
@@ -291,10 +295,21 @@ function TileMap() {
     });
 
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-left');
+    map.addControl(
+      new maplibregl.GeolocateControl({
+        positionOptions: { enableHighAccuracy: true },
+        trackUserLocation: true,
+        showAccuracyCircle: true,
+      }),
+      'top-left',
+    );
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
     map.on('click', (event) => {
-      void identifyPoint(event.lngLat.lat, event.lngLat.lng);
+      scheduleIdentifyPoint(event);
     });
+    map.on('dblclick', markZoomIntent);
+    map.on('zoomstart', markZoomIntent);
+    map.on('dragstart', cancelPendingIdentify);
     map.on('error', (event) => {
       const message = event.error?.message;
       if (message) {
@@ -305,6 +320,7 @@ function TileMap() {
     window.addEventListener('beforeunload', persistCurrentMapView);
 
     onCleanup(() => {
+      cancelPendingIdentify();
       identifyAbort?.abort();
       identifyMarker?.remove();
       persistCurrentMapView();
@@ -315,6 +331,39 @@ function TileMap() {
       map = null;
     });
   });
+
+  function scheduleIdentifyPoint(event: maplibregl.MapMouseEvent) {
+    const originalEvent = event.originalEvent;
+    if (originalEvent instanceof MouseEvent && originalEvent.detail > 1) {
+      markZoomIntent();
+      return;
+    }
+
+    cancelPendingIdentify();
+    const { lat, lng } = event.lngLat;
+    pendingIdentifyTimeout = window.setTimeout(() => {
+      pendingIdentifyTimeout = null;
+      if (performance.now() - lastZoomIntentAt < IDENTIFY_ZOOM_SUPPRESS_MS) {
+        return;
+      }
+
+      void identifyPoint(lat, lng);
+    }, IDENTIFY_CLICK_DELAY_MS);
+  }
+
+  function cancelPendingIdentify() {
+    if (pendingIdentifyTimeout === null) {
+      return;
+    }
+
+    window.clearTimeout(pendingIdentifyTimeout);
+    pendingIdentifyTimeout = null;
+  }
+
+  function markZoomIntent() {
+    lastZoomIntentAt = performance.now();
+    cancelPendingIdentify();
+  }
 
   function persistCurrentMapView() {
     if (!map) {
