@@ -45,7 +45,6 @@ type IdentifyResponse = {
   features: IdentifiedFeature[];
 };
 
-const VECTOR_MIN_ZOOM = 14;
 const MAX_MAP_ZOOM = 18;
 const MAP_VIEW_STORAGE_KEY = 'tileme.map.view.v1';
 const IDENTIFY_CLICK_DELAY_MS = 280;
@@ -251,7 +250,6 @@ function TileMap() {
   const [isIdentifying, setIsIdentifying] = createSignal(false);
 
   onMount(() => {
-    const rasterTileUrlTemplate = `${window.location.origin}/raster/{z}/{x}/{y}.png`;
     const vectorTileUrlTemplate = `${window.location.origin}/tiles/{z}/{x}/{y}.pbf`;
     const initialView = loadStoredMapView();
 
@@ -261,31 +259,15 @@ function TileMap() {
         version: 8,
         glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
         sources: {
-          'tileme-raster': {
-            type: 'raster',
-            tiles: [rasterTileUrlTemplate],
-            minzoom: 0,
-            maxzoom: VECTOR_MIN_ZOOM,
-            scheme: 'xyz',
-            tileSize: 256,
-          },
           tileme: {
             type: 'vector',
             tiles: [vectorTileUrlTemplate],
-            minzoom: VECTOR_MIN_ZOOM,
+            minzoom: 0,
             maxzoom: MAX_MAP_ZOOM,
             scheme: 'xyz',
           },
         },
-        layers: [
-          {
-            id: 'tileme-raster',
-            type: 'raster',
-            source: 'tileme-raster',
-            maxzoom: VECTOR_MIN_ZOOM,
-          },
-          ...mapLayers,
-        ],
+        layers: mapLayers,
       },
       center: [initialView.lng, initialView.lat],
       zoom: initialView.zoom,
@@ -573,7 +555,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
   {
     id: 'background',
     type: 'background',
-    minzoom: VECTOR_MIN_ZOOM,
+    minzoom: 0,
     paint: { 'background-color': '#edf0e7' },
   },
   {
@@ -581,7 +563,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'fill',
     source: 'tileme',
     'source-layer': 'water',
-    minzoom: VECTOR_MIN_ZOOM,
+    minzoom: 0,
     paint: { 'fill-color': '#8fb9d4', 'fill-opacity': 0.92 },
   },
   {
@@ -589,7 +571,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'fill',
     source: 'tileme',
     'source-layer': 'landuse',
-    minzoom: VECTOR_MIN_ZOOM,
+    minzoom: 8,
     paint: { 'fill-color': '#bfd4ad', 'fill-opacity': 0.5 },
   },
   {
@@ -597,7 +579,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'line',
     source: 'tileme',
     'source-layer': 'boundaries',
-    minzoom: VECTOR_MIN_ZOOM,
+    minzoom: 0,
     paint: {
       'line-color': ['case', ['<=', ['coalesce', ['get', 'admin_level'], 99], 4], '#6f5f53', '#9a8b7b'],
       'line-opacity': ['interpolate', ['linear'], ['zoom'], 2, 0.55, 8, 0.85, 12, 0.65],
@@ -609,7 +591,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'line',
     source: 'tileme',
     'source-layer': 'roads',
-    minzoom: VECTOR_MIN_ZOOM,
+    minzoom: 5,
     paint: {
       'line-color': '#b8afa4',
       'line-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.5, 10, 0.75, 14, 0.9],
@@ -621,7 +603,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'line',
     source: 'tileme',
     'source-layer': 'roads',
-    minzoom: VECTOR_MIN_ZOOM,
+    minzoom: 5,
     paint: {
       'line-color': ['case', ['in', ['get', 'class'], ['literal', ['motorway', 'trunk']]], '#f1b35f', '#fff8ea'],
       'line-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.72, 10, 0.9, 14, 1],
@@ -633,7 +615,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'fill',
     source: 'tileme',
     'source-layer': 'buildings',
-    minzoom: VECTOR_MIN_ZOOM,
+    minzoom: 14,
     paint: { 'fill-color': '#c6a889', 'fill-opacity': 0.76 },
   },
   {
@@ -641,7 +623,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'symbol',
     source: 'tileme',
     'source-layer': 'water',
-    minzoom: VECTOR_MIN_ZOOM,
+    minzoom: 0,
     filter: ['has', 'name'],
     layout: {
       'text-field': ['get', 'name'],
@@ -660,7 +642,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'symbol',
     source: 'tileme',
     'source-layer': 'landuse',
-    minzoom: VECTOR_MIN_ZOOM,
+    minzoom: 8,
     filter: [
       'all',
       ['has', 'name'],
@@ -683,7 +665,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'symbol',
     source: 'tileme',
     'source-layer': 'roads',
-    minzoom: VECTOR_MIN_ZOOM,
+    minzoom: 5,
     layout: {
       'symbol-placement': 'line',
       'text-field': ['coalesce', ['get', 'name'], ['get', 'ref']],
@@ -723,7 +705,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'symbol',
     source: 'tileme',
     'source-layer': 'places',
-    minzoom: VECTOR_MIN_ZOOM,
+    minzoom: 2,
     layout: {
       'text-field': ['get', 'name'],
       'text-font': ['Noto Sans Regular'],

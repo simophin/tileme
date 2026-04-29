@@ -11,7 +11,6 @@ use serde::Serialize;
 use sqlx::Row;
 
 use crate::app::AppState;
-use crate::db;
 use crate::error::AppError;
 
 pub const MAX_ZOOM: u8 = 18;
@@ -89,32 +88,14 @@ async fn tile(
     Ok(tile_response(mvt))
 }
 
-pub async fn vector_tile_bytes(
+async fn vector_tile_bytes(
     state: &Arc<AppState>,
     z: u8,
     x: u32,
     y: u32,
 ) -> Result<Vec<u8>, AppError> {
     let started = Instant::now();
-    let version = db::current_tile_version(&state.pool).await?;
-    let cacheable = z <= state.config.cache_max_zoom;
     let z_label = z.to_string();
-
-    if cacheable {
-        if let Some(mvt) = read_cache(&state, version, z, x, y).await? {
-            state
-                .metrics
-                .tile_cache_hits
-                .with_label_values(&[&z_label])
-                .inc();
-            return Ok(mvt);
-        }
-        state
-            .metrics
-            .tile_cache_misses
-            .with_label_values(&[&z_label])
-            .inc();
-    }
 
     let timer = state
         .metrics
@@ -124,10 +105,6 @@ pub async fn vector_tile_bytes(
     let mvt = generate_tile(&state, z, x, y).await?;
     timer.observe_duration();
 
-    if cacheable && !mvt.is_empty() {
-        write_cache(&state, version, z, x, y, &mvt).await?;
-    }
-
     state
         .metrics
         .tile_generation_seconds
@@ -136,7 +113,7 @@ pub async fn vector_tile_bytes(
     Ok(mvt)
 }
 
-pub fn validate_tile(z: u8, x: u32, y: u32) -> Result<(), AppError> {
+fn validate_tile(z: u8, x: u32, y: u32) -> Result<(), AppError> {
     if z > MAX_ZOOM {
         return Err(AppError::BadRequest(format!("max zoom is {MAX_ZOOM}")));
     }
@@ -155,48 +132,6 @@ fn parse_y(value: &str) -> Result<u32, AppError> {
     };
     raw.parse()
         .map_err(|_| AppError::BadRequest("invalid tile y coordinate".into()))
-}
-
-async fn read_cache(
-    state: &Arc<AppState>,
-    version: i64,
-    z: u8,
-    x: u32,
-    y: u32,
-) -> Result<Option<Vec<u8>>, AppError> {
-    let row = sqlx::query(
-        "SELECT mvt FROM tile_cache WHERE version = $1 AND z = $2 AND x = $3 AND y = $4",
-    )
-    .bind(version)
-    .bind(i32::from(z))
-    .bind(x as i32)
-    .bind(y as i32)
-    .fetch_optional(&state.pool)
-    .await?;
-    Ok(row.map(|row| row.try_get("mvt")).transpose()?)
-}
-
-async fn write_cache(
-    state: &Arc<AppState>,
-    version: i64,
-    z: u8,
-    x: u32,
-    y: u32,
-    mvt: &[u8],
-) -> Result<(), AppError> {
-    sqlx::query(
-        "INSERT INTO tile_cache (version, z, x, y, mvt)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (version, z, x, y) DO NOTHING",
-    )
-    .bind(version)
-    .bind(i32::from(z))
-    .bind(x as i32)
-    .bind(y as i32)
-    .bind(mvt)
-    .execute(&state.pool)
-    .await?;
-    Ok(())
 }
 
 async fn generate_tile(state: &Arc<AppState>, z: u8, x: u32, y: u32) -> Result<Vec<u8>, AppError> {
@@ -330,10 +265,6 @@ fn tile_response(mvt: Vec<u8>) -> Response<Body> {
     headers.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/vnd.mapbox-vector-tile"),
-    );
-    headers.insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=3600"),
     );
 
     (StatusCode::OK, headers, mvt).into_response()

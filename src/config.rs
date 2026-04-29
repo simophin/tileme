@@ -10,10 +10,6 @@ pub struct Config {
     pub osm2pgsql_bin: String,
     pub osm2pgsql_flex_path: PathBuf,
     pub osm2pgsql_cache_mb: u32,
-    pub cache_max_zoom: u8,
-    pub raster_cache_max_bytes: i64,
-    pub raster_cache_touch_interval_seconds: i64,
-    pub raster_style_version: i32,
     pub log_json: bool,
     #[cfg(debug_assertions)]
     pub debug_vite_origin: String,
@@ -50,26 +46,6 @@ struct Cli {
     #[arg(long, env = "TILEME_OSM2PGSQL_CACHE_MB", default_value_t = 1024)]
     osm2pgsql_cache_mb: u32,
 
-    #[arg(long, env = "TILEME_CACHE_MAX_ZOOM", default_value_t = 8)]
-    cache_max_zoom: u8,
-
-    #[arg(
-        long,
-        env = "TILEME_RASTER_CACHE_MAX_BYTES",
-        default_value_t = 512 * 1024 * 1024
-    )]
-    raster_cache_max_bytes: i64,
-
-    #[arg(
-        long,
-        env = "TILEME_RASTER_CACHE_TOUCH_INTERVAL_SECONDS",
-        default_value_t = 300
-    )]
-    raster_cache_touch_interval_seconds: i64,
-
-    #[arg(long, env = "TILEME_RASTER_STYLE_VERSION", default_value_t = 3)]
-    raster_style_version: i32,
-
     #[arg(long, env = "TILEME_LOG_JSON", default_value_t = false)]
     log_json: bool,
 
@@ -91,10 +67,6 @@ impl From<Cli> for Config {
             osm2pgsql_bin: cli.osm2pgsql_bin,
             osm2pgsql_flex_path: cli.osm2pgsql_flex_path,
             osm2pgsql_cache_mb: cli.osm2pgsql_cache_mb,
-            cache_max_zoom: cli.cache_max_zoom,
-            raster_cache_max_bytes: cli.raster_cache_max_bytes,
-            raster_cache_touch_interval_seconds: cli.raster_cache_touch_interval_seconds,
-            raster_style_version: cli.raster_style_version,
             log_json: cli.log_json,
             #[cfg(debug_assertions)]
             debug_vite_origin: cli.debug_vite_origin,

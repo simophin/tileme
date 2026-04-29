@@ -19,7 +19,6 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::app::AppState;
-use crate::db;
 use crate::error::AppError;
 
 const IMPORT_JOB_CHANNEL: &str = "tileme_import_jobs";
@@ -332,12 +331,6 @@ async fn run_import_job(state: &Arc<AppState>, job: &ImportJob) -> Result<()> {
     .await?;
     post_import_database_setup(&state.pool).await?;
 
-    update_progress(&state.pool, job.id, "bumping tile version").await?;
-    let version = db::bump_tile_version(&state.pool).await?;
-    sqlx::query("DELETE FROM tile_cache WHERE version < $1")
-        .bind(version)
-        .execute(&state.pool)
-        .await?;
     Ok(())
 }
 
