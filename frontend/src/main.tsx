@@ -50,8 +50,9 @@ type IdentifyResponse = {
 
 const MAX_MAP_ZOOM = 18;
 const MAP_VIEW_STORAGE_KEY = 'tileme.map.view.v1';
-const IDENTIFY_CLICK_DELAY_MS = 280;
-const IDENTIFY_ZOOM_SUPPRESS_MS = 450;
+const IDENTIFY_LONG_PRESS_MS = 550;
+const IDENTIFY_LONG_PRESS_MOVE_TOLERANCE_PX = 10;
+const IDENTIFY_POST_LONG_PRESS_SUPPRESS_MS = 700;
 
 type StoredMapView = {
   lng: number;
@@ -241,12 +242,16 @@ function App() {
 
 function TileMap() {
   let containerRef!: HTMLDivElement;
+  let panelRef: HTMLElement | undefined;
   let map: Map | null = null;
   let identifyMarker: maplibregl.Marker | null = null;
   let identifyAbort: AbortController | null = null;
-  let pendingIdentifyTimeout: number | null = null;
+  let pendingLongPressTimeout: number | null = null;
   let resizeObserver: ResizeObserver | null = null;
-  let lastZoomIntentAt = 0;
+  let activeLongPressPointerId: number | null = null;
+  let longPressStartX = 0;
+  let longPressStartY = 0;
+  let suppressMapClickUntil = 0;
   const [mapError, setMapError] = createSignal<string | null>(null);
   const [identifyResult, setIdentifyResult] = createSignal<IdentifyResponse | null>(null);
   const [identifyError, setIdentifyError] = createSignal<string | null>(null);
@@ -290,12 +295,9 @@ function TileMap() {
       'top-left',
     );
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
-    map.on('click', (event) => {
-      scheduleIdentifyPoint(event);
-    });
-    map.on('dblclick', markZoomIntent);
-    map.on('zoomstart', markZoomIntent);
-    map.on('dragstart', cancelPendingIdentify);
+    map.on('click', handleMapClick);
+    map.on('contextmenu', handleMapContextMenu);
+    map.on('dragstart', cancelPendingLongPress);
     map.on('error', (event) => {
       const message = event.error?.message;
       if (message) {
@@ -305,14 +307,26 @@ function TileMap() {
     map.on('moveend', persistCurrentMapView);
     resizeObserver = new ResizeObserver(() => map?.resize());
     resizeObserver.observe(containerRef);
+    containerRef.addEventListener('pointerdown', handlePointerDown);
+    containerRef.addEventListener('pointermove', handlePointerMove);
+    containerRef.addEventListener('pointerup', cancelPendingLongPress);
+    containerRef.addEventListener('pointercancel', cancelPendingLongPress);
+    containerRef.addEventListener('pointerleave', cancelPendingLongPress);
+    document.addEventListener('pointerdown', handleDocumentPointerDown, true);
     window.addEventListener('beforeunload', persistCurrentMapView);
 
     onCleanup(() => {
-      cancelPendingIdentify();
+      cancelPendingLongPress();
       identifyAbort?.abort();
       identifyMarker?.remove();
       resizeObserver?.disconnect();
       persistCurrentMapView();
+      document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
+      containerRef.removeEventListener('pointerdown', handlePointerDown);
+      containerRef.removeEventListener('pointermove', handlePointerMove);
+      containerRef.removeEventListener('pointerup', cancelPendingLongPress);
+      containerRef.removeEventListener('pointercancel', cancelPendingLongPress);
+      containerRef.removeEventListener('pointerleave', cancelPendingLongPress);
       window.removeEventListener('beforeunload', persistCurrentMapView);
       map?.remove();
       identifyAbort = null;
@@ -322,37 +336,84 @@ function TileMap() {
     });
   });
 
-  function scheduleIdentifyPoint(event: maplibregl.MapMouseEvent) {
-    const originalEvent = event.originalEvent;
-    if (originalEvent instanceof MouseEvent && originalEvent.detail > 1) {
-      markZoomIntent();
+  function handleMapClick() {
+    if (performance.now() < suppressMapClickUntil) {
       return;
     }
 
-    cancelPendingIdentify();
-    const { lat, lng } = event.lngLat;
-    pendingIdentifyTimeout = window.setTimeout(() => {
-      pendingIdentifyTimeout = null;
-      if (performance.now() - lastZoomIntentAt < IDENTIFY_ZOOM_SUPPRESS_MS) {
+    if (!identifyResult() && !identifyError() && !isIdentifying()) {
+      return;
+    }
+
+    clearIdentify();
+  }
+
+  function handleMapContextMenu(event: maplibregl.MapMouseEvent) {
+    event.preventDefault();
+    suppressMapClickUntil = performance.now() + IDENTIFY_POST_LONG_PRESS_SUPPRESS_MS;
+    void identifyPoint(event.lngLat.lat, event.lngLat.lng);
+  }
+
+  function cancelPendingLongPress() {
+    activeLongPressPointerId = null;
+    if (pendingLongPressTimeout === null) {
+      return;
+    }
+
+    window.clearTimeout(pendingLongPressTimeout);
+    pendingLongPressTimeout = null;
+  }
+
+  function handlePointerDown(event: PointerEvent) {
+    if (event.pointerType !== 'touch' || !event.isPrimary) {
+      return;
+    }
+    if ((event.target as HTMLElement | null)?.closest('.maplibregl-ctrl')) {
+      return;
+    }
+
+    cancelPendingLongPress();
+    activeLongPressPointerId = event.pointerId;
+    longPressStartX = event.clientX;
+    longPressStartY = event.clientY;
+    pendingLongPressTimeout = window.setTimeout(() => {
+      pendingLongPressTimeout = null;
+      if (!map || activeLongPressPointerId !== event.pointerId) {
         return;
       }
 
-      void identifyPoint(lat, lng);
-    }, IDENTIFY_CLICK_DELAY_MS);
+      const bounds = containerRef.getBoundingClientRect();
+      const point = [event.clientX - bounds.left, event.clientY - bounds.top] as [number, number];
+      const lngLat = map.unproject(point);
+      suppressMapClickUntil = performance.now() + IDENTIFY_POST_LONG_PRESS_SUPPRESS_MS;
+      activeLongPressPointerId = null;
+      void identifyPoint(lngLat.lat, lngLat.lng);
+    }, IDENTIFY_LONG_PRESS_MS);
   }
 
-  function cancelPendingIdentify() {
-    if (pendingIdentifyTimeout === null) {
+  function handlePointerMove(event: PointerEvent) {
+    if (event.pointerId !== activeLongPressPointerId) {
       return;
     }
 
-    window.clearTimeout(pendingIdentifyTimeout);
-    pendingIdentifyTimeout = null;
+    const dx = event.clientX - longPressStartX;
+    const dy = event.clientY - longPressStartY;
+    if (Math.hypot(dx, dy) > IDENTIFY_LONG_PRESS_MOVE_TOLERANCE_PX) {
+      cancelPendingLongPress();
+    }
   }
 
-  function markZoomIntent() {
-    lastZoomIntentAt = performance.now();
-    cancelPendingIdentify();
+  function handleDocumentPointerDown(event: PointerEvent) {
+    if (!identifyResult() && !identifyError() && !isIdentifying()) {
+      return;
+    }
+
+    const target = event.target as Node | null;
+    if (panelRef?.contains(target ?? null)) {
+      return;
+    }
+
+    clearIdentify();
   }
 
   function persistCurrentMapView() {
@@ -430,7 +491,7 @@ function TileMap() {
       <Show when={mapError()}>{(error) => <div class="mapError">{error()}</div>}</Show>
       <Show when={identifyResult()}>
         {(result) => (
-          <section class="identifyPanel" aria-label="Clicked point details">
+          <section ref={panelRef} class="identifyPanel" aria-label="Clicked point details">
             <div class="identifyHeader">
               <div>
                 <h2>Point</h2>
@@ -580,7 +641,34 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     source: 'tileme',
     'source-layer': 'water',
     minzoom: 0,
-    paint: { 'fill-color': '#8fb9d4', 'fill-opacity': 0.92 },
+    paint: {
+      'fill-color': [
+        'match',
+        ['get', 'class'],
+        'ocean',
+        '#6ea8d8',
+        'sea',
+        '#79b2de',
+        'bay',
+        '#84b8df',
+        'strait',
+        '#88bcdf',
+        'river',
+        '#8ec2de',
+        'riverbank',
+        '#98c8df',
+        'canal',
+        '#91c0d7',
+        'lake',
+        '#8fb9d4',
+        'reservoir',
+        '#90bdd7',
+        'pond',
+        '#9bc6da',
+        '#8fb9d4',
+      ],
+      'fill-opacity': 0.94,
+    },
   },
   {
     id: 'landuse',

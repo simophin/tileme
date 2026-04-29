@@ -5,8 +5,9 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
 const MAX_MAP_ZOOM = 18;
 const MAP_VIEW_STORAGE_KEY = 'tileme.map.view.v1';
-const IDENTIFY_CLICK_DELAY_MS = 280;
-const IDENTIFY_ZOOM_SUPPRESS_MS = 450;
+const IDENTIFY_LONG_PRESS_MS = 550;
+const IDENTIFY_LONG_PRESS_MOVE_TOLERANCE_PX = 10;
+const IDENTIFY_POST_LONG_PRESS_SUPPRESS_MS = 700;
 const DEFAULT_MAP_VIEW = {
     lng: 133.7751,
     lat: -25.2744,
@@ -147,12 +148,16 @@ function App() {
 }
 function TileMap() {
     let containerRef;
+    let panelRef;
     let map = null;
     let identifyMarker = null;
     let identifyAbort = null;
-    let pendingIdentifyTimeout = null;
+    let pendingLongPressTimeout = null;
     let resizeObserver = null;
-    let lastZoomIntentAt = 0;
+    let activeLongPressPointerId = null;
+    let longPressStartX = 0;
+    let longPressStartY = 0;
+    let suppressMapClickUntil = 0;
     const [mapError, setMapError] = createSignal(null);
     const [identifyResult, setIdentifyResult] = createSignal(null);
     const [identifyError, setIdentifyError] = createSignal(null);
@@ -190,12 +195,9 @@ function TileMap() {
             showAccuracyCircle: true,
         }), 'top-left');
         map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
-        map.on('click', (event) => {
-            scheduleIdentifyPoint(event);
-        });
-        map.on('dblclick', markZoomIntent);
-        map.on('zoomstart', markZoomIntent);
-        map.on('dragstart', cancelPendingIdentify);
+        map.on('click', handleMapClick);
+        map.on('contextmenu', handleMapContextMenu);
+        map.on('dragstart', cancelPendingLongPress);
         map.on('error', (event) => {
             const message = event.error?.message;
             if (message) {
@@ -205,13 +207,25 @@ function TileMap() {
         map.on('moveend', persistCurrentMapView);
         resizeObserver = new ResizeObserver(() => map?.resize());
         resizeObserver.observe(containerRef);
+        containerRef.addEventListener('pointerdown', handlePointerDown);
+        containerRef.addEventListener('pointermove', handlePointerMove);
+        containerRef.addEventListener('pointerup', cancelPendingLongPress);
+        containerRef.addEventListener('pointercancel', cancelPendingLongPress);
+        containerRef.addEventListener('pointerleave', cancelPendingLongPress);
+        document.addEventListener('pointerdown', handleDocumentPointerDown, true);
         window.addEventListener('beforeunload', persistCurrentMapView);
         onCleanup(() => {
-            cancelPendingIdentify();
+            cancelPendingLongPress();
             identifyAbort?.abort();
             identifyMarker?.remove();
             resizeObserver?.disconnect();
             persistCurrentMapView();
+            document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
+            containerRef.removeEventListener('pointerdown', handlePointerDown);
+            containerRef.removeEventListener('pointermove', handlePointerMove);
+            containerRef.removeEventListener('pointerup', cancelPendingLongPress);
+            containerRef.removeEventListener('pointercancel', cancelPendingLongPress);
+            containerRef.removeEventListener('pointerleave', cancelPendingLongPress);
             window.removeEventListener('beforeunload', persistCurrentMapView);
             map?.remove();
             identifyAbort = null;
@@ -220,32 +234,71 @@ function TileMap() {
             map = null;
         });
     });
-    function scheduleIdentifyPoint(event) {
-        const originalEvent = event.originalEvent;
-        if (originalEvent instanceof MouseEvent && originalEvent.detail > 1) {
-            markZoomIntent();
+    function handleMapClick() {
+        if (performance.now() < suppressMapClickUntil) {
             return;
         }
-        cancelPendingIdentify();
-        const { lat, lng } = event.lngLat;
-        pendingIdentifyTimeout = window.setTimeout(() => {
-            pendingIdentifyTimeout = null;
-            if (performance.now() - lastZoomIntentAt < IDENTIFY_ZOOM_SUPPRESS_MS) {
+        if (!identifyResult() && !identifyError() && !isIdentifying()) {
+            return;
+        }
+        clearIdentify();
+    }
+    function handleMapContextMenu(event) {
+        event.preventDefault();
+        suppressMapClickUntil = performance.now() + IDENTIFY_POST_LONG_PRESS_SUPPRESS_MS;
+        void identifyPoint(event.lngLat.lat, event.lngLat.lng);
+    }
+    function cancelPendingLongPress() {
+        activeLongPressPointerId = null;
+        if (pendingLongPressTimeout === null) {
+            return;
+        }
+        window.clearTimeout(pendingLongPressTimeout);
+        pendingLongPressTimeout = null;
+    }
+    function handlePointerDown(event) {
+        if (event.pointerType !== 'touch' || !event.isPrimary) {
+            return;
+        }
+        if (event.target?.closest('.maplibregl-ctrl')) {
+            return;
+        }
+        cancelPendingLongPress();
+        activeLongPressPointerId = event.pointerId;
+        longPressStartX = event.clientX;
+        longPressStartY = event.clientY;
+        pendingLongPressTimeout = window.setTimeout(() => {
+            pendingLongPressTimeout = null;
+            if (!map || activeLongPressPointerId !== event.pointerId) {
                 return;
             }
-            void identifyPoint(lat, lng);
-        }, IDENTIFY_CLICK_DELAY_MS);
+            const bounds = containerRef.getBoundingClientRect();
+            const point = [event.clientX - bounds.left, event.clientY - bounds.top];
+            const lngLat = map.unproject(point);
+            suppressMapClickUntil = performance.now() + IDENTIFY_POST_LONG_PRESS_SUPPRESS_MS;
+            activeLongPressPointerId = null;
+            void identifyPoint(lngLat.lat, lngLat.lng);
+        }, IDENTIFY_LONG_PRESS_MS);
     }
-    function cancelPendingIdentify() {
-        if (pendingIdentifyTimeout === null) {
+    function handlePointerMove(event) {
+        if (event.pointerId !== activeLongPressPointerId) {
             return;
         }
-        window.clearTimeout(pendingIdentifyTimeout);
-        pendingIdentifyTimeout = null;
+        const dx = event.clientX - longPressStartX;
+        const dy = event.clientY - longPressStartY;
+        if (Math.hypot(dx, dy) > IDENTIFY_LONG_PRESS_MOVE_TOLERANCE_PX) {
+            cancelPendingLongPress();
+        }
     }
-    function markZoomIntent() {
-        lastZoomIntentAt = performance.now();
-        cancelPendingIdentify();
+    function handleDocumentPointerDown(event) {
+        if (!identifyResult() && !identifyError() && !isIdentifying()) {
+            return;
+        }
+        const target = event.target;
+        if (panelRef?.contains(target)) {
+            return;
+        }
+        clearIdentify();
     }
     function persistCurrentMapView() {
         if (!map) {
@@ -313,7 +366,7 @@ function TileMap() {
       <div ref={containerRef} class="map"/>
       <Show when={mapError()}>{(error) => <div class="mapError">{error()}</div>}</Show>
       <Show when={identifyResult()}>
-        {(result) => (<section class="identifyPanel" aria-label="Clicked point details">
+        {(result) => (<section ref={panelRef} class="identifyPanel" aria-label="Clicked point details">
             <div class="identifyHeader">
               <div>
                 <h2>Point</h2>
@@ -439,7 +492,34 @@ const mapLayers = [
         source: 'tileme',
         'source-layer': 'water',
         minzoom: 0,
-        paint: { 'fill-color': '#8fb9d4', 'fill-opacity': 0.92 },
+        paint: {
+            'fill-color': [
+                'match',
+                ['get', 'class'],
+                'ocean',
+                '#6ea8d8',
+                'sea',
+                '#79b2de',
+                'bay',
+                '#84b8df',
+                'strait',
+                '#88bcdf',
+                'river',
+                '#8ec2de',
+                'riverbank',
+                '#98c8df',
+                'canal',
+                '#91c0d7',
+                'lake',
+                '#8fb9d4',
+                'reservoir',
+                '#90bdd7',
+                'pond',
+                '#9bc6da',
+                '#8fb9d4',
+            ],
+            'fill-opacity': 0.94,
+        },
     },
     {
         id: 'landuse',
