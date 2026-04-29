@@ -8,6 +8,7 @@ type ImportState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
 type ImportJob = {
   id: string;
+  import_name: string;
   source_type: 'local_path' | 'url';
   source_value: string;
   mode: string;
@@ -21,6 +22,10 @@ type ImportJob = {
   heartbeat_at: string | null;
   created_at: string;
   updated_at: string;
+};
+
+type ImportName = {
+  name: string;
 };
 
 type ApiError = {
@@ -92,8 +97,12 @@ const DEFAULT_MAP_VIEW: StoredMapView = {
 
 function App() {
   const [jobs, setJobs] = createSignal<ImportJob[]>([]);
+  const [importNames, setImportNames] = createSignal<ImportName[]>([]);
   const [jobsError, setJobsError] = createSignal<string | null>(null);
   const [submitError, setSubmitError] = createSignal<string | null>(null);
+  const [importNameMode, setImportNameMode] = createSignal<'existing' | 'new'>('new');
+  const [selectedImportName, setSelectedImportName] = createSignal('');
+  const [newImportName, setNewImportName] = createSignal('');
   const [sourceKind, setSourceKind] = createSignal<'local_path' | 'url'>('local_path');
   const [sourceValue, setSourceValue] = createSignal('');
   const [isSubmitting, setIsSubmitting] = createSignal(false);
@@ -116,8 +125,26 @@ function App() {
     }
   }
 
+  async function loadImportNames() {
+    try {
+      const response = await fetch('/import-names');
+      if (!response.ok) {
+        throw new Error(await readApiError(response));
+      }
+      const names = (await response.json()) as ImportName[];
+      setImportNames(names);
+      if (!selectedImportName() && names[0]) {
+        setSelectedImportName(names[0].name);
+        setImportNameMode('existing');
+      }
+    } catch (error) {
+      setJobsError(error instanceof Error ? error.message : 'Unable to load import names');
+    }
+  }
+
   onMount(() => {
     void loadJobs();
+    void loadImportNames();
     const interval = window.setInterval(() => void loadJobs(), 3000);
     onCleanup(() => window.clearInterval(interval));
   });
@@ -127,6 +154,8 @@ function App() {
     setSubmitError(null);
     setIsSubmitting(true);
 
+    const importName =
+      importNameMode() === 'existing' ? selectedImportName().trim() : newImportName().trim();
     const value = sourceValue().trim();
     const source =
       sourceKind() === 'url'
@@ -137,13 +166,19 @@ function App() {
       const response = await fetch('/imports', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ source, mode: 'replace' }),
+        body: JSON.stringify({ import_name: importName, source, mode: 'replace' }),
       });
       if (!response.ok) {
         throw new Error(await readApiError(response));
       }
       setSourceValue('');
+      if (importNameMode() === 'new') {
+        setSelectedImportName(importName);
+        setNewImportName('');
+        setImportNameMode('existing');
+      }
       await loadJobs();
+      await loadImportNames();
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : 'Unable to create import job');
     } finally {
@@ -196,6 +231,53 @@ function App() {
         </div>
 
         <form class="importForm" onSubmit={submitImport}>
+          <div class="segmented" role="radiogroup" aria-label="Import name mode">
+            <button
+              type="button"
+              classList={{ selected: importNameMode() === 'existing' }}
+              onClick={() => setImportNameMode('existing')}
+              disabled={importNames().length === 0}
+            >
+              Existing
+            </button>
+            <button
+              type="button"
+              classList={{ selected: importNameMode() === 'new' }}
+              onClick={() => setImportNameMode('new')}
+            >
+              New
+            </button>
+          </div>
+
+          <Show
+            when={importNameMode() === 'existing' && importNames().length > 0}
+            fallback={
+              <label class="field">
+                <span>Import name</span>
+                <input
+                  value={newImportName()}
+                  onInput={(event) => setNewImportName(event.currentTarget.value)}
+                  placeholder="australia"
+                  maxlength="80"
+                  required
+                />
+              </label>
+            }
+          >
+            <label class="field">
+              <span>Import name</span>
+              <select
+                value={selectedImportName()}
+                onInput={(event) => setSelectedImportName(event.currentTarget.value)}
+                required
+              >
+                <For each={importNames()}>
+                  {(name) => <option value={name.name}>{name.name}</option>}
+                </For>
+              </select>
+            </label>
+          </Show>
+
           <div class="segmented" role="radiogroup" aria-label="Import source type">
             <button
               type="button"
@@ -966,6 +1048,7 @@ function JobRow(props: { job: ImportJob; onCancel: (id: string) => Promise<void>
         <span class={`stateBadge ${props.job.state}`}>{props.job.state}</span>
         <time>{formatDate(props.job.created_at)}</time>
       </div>
+      <p class="importName">{props.job.import_name}</p>
       <p class="sourceValue" title={props.job.source_value}>
         {props.job.source_value}
       </p>

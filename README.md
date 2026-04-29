@@ -123,7 +123,6 @@ Configuration is managed by `clap`; every setting can be provided as a CLI flag 
 | `--listen-addr` | `TILEME_LISTEN_ADDR` | `127.0.0.1:3000` |
 | `--import-dir` | `TILEME_IMPORT_DIR` | `/tmp/tileme-imports` |
 | `--osm2pgsql-bin` | `TILEME_OSM2PGSQL_BIN` | `osm2pgsql` |
-| `--osm2pgsql-flex-path` | `TILEME_OSM2PGSQL_FLEX` | `osm2pgsql/flex.lua` |
 | `--osm2pgsql-cache-mb` | `TILEME_OSM2PGSQL_CACHE_MB` | `1024` |
 | `--log-json` | `TILEME_LOG_JSON` | `false` |
 | `--debug-vite-origin` | `TILEME_DEBUG_VITE_ORIGIN` | `http://127.0.0.1:4000` in debug builds |

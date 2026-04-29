@@ -75,7 +75,8 @@ fn layer(id: &'static str, minzoom: u8, maxzoom: u8) -> VectorLayer {
             "unit": "String",
             "ref": "String",
             "height": "Number",
-            "admin_level": "Number"
+            "admin_level": "Number",
+            "tags": "Object"
         }),
         minzoom,
         maxzoom,
@@ -156,7 +157,7 @@ WITH bounds AS (
 water AS (
     SELECT ST_AsMVT(water_rows, 'water', 4096, 'geom') AS mvt
     FROM (
-        SELECT class, name, ST_AsMVTGeom(w.geom, bounds.geom, 4096, 64, true) AS geom
+        SELECT class, name, tags, ST_AsMVTGeom(w.geom, bounds.geom, 4096, 64, true) AS geom
         FROM {water_table} w, bounds
         WHERE w.geom && bounds.geom
     ) water_rows
@@ -164,7 +165,7 @@ water AS (
 landuse AS (
     SELECT ST_AsMVT(landuse_rows, 'landuse', 4096, 'geom') AS mvt
     FROM (
-        SELECT class, name, ST_AsMVTGeom(l.geom, bounds.geom, 4096, 64, true) AS geom
+        SELECT class, name, tags, ST_AsMVTGeom(l.geom, bounds.geom, 4096, 64, true) AS geom
         FROM osm_landuse l, bounds
         WHERE $1 >= 8
           AND l.geom && bounds.geom
@@ -178,7 +179,7 @@ landuse AS (
 roads AS (
     SELECT ST_AsMVT(roads_rows, 'roads', 4096, 'geom') AS mvt
     FROM (
-        SELECT class, name, ref, layer, tunnel, bridge, ST_AsMVTGeom(r.geom, bounds.geom, 4096, 64, true) AS geom
+        SELECT class, name, ref, layer, tunnel, bridge, tags, ST_AsMVTGeom(r.geom, bounds.geom, 4096, 64, true) AS geom
         FROM osm_roads r, bounds
         WHERE $1 >= 5
           AND r.geom && bounds.geom
@@ -202,7 +203,7 @@ roads AS (
 buildings AS (
     SELECT ST_AsMVT(building_rows, 'buildings', 4096, 'geom') AS mvt
     FROM (
-        SELECT class, name, house_number, height, ST_AsMVTGeom(b.geom, bounds.geom, 4096, 64, true) AS geom
+        SELECT class, name, house_number, height, tags, ST_AsMVTGeom(b.geom, bounds.geom, 4096, 64, true) AS geom
         FROM osm_buildings b, bounds
         WHERE $1 >= 14 AND b.geom && bounds.geom
     ) building_rows
@@ -210,7 +211,7 @@ buildings AS (
 addresses AS (
     SELECT ST_AsMVT(address_rows, 'addresses', 4096, 'geom') AS mvt
     FROM (
-        SELECT name, house_number, street, unit, ST_AsMVTGeom(a.geom, bounds.geom, 4096, 64, true) AS geom
+        SELECT name, house_number, street, unit, tags, ST_AsMVTGeom(a.geom, bounds.geom, 4096, 64, true) AS geom
         FROM osm_addresses a, bounds
         WHERE $1 >= 16
           AND a.geom && bounds.geom
@@ -219,7 +220,7 @@ addresses AS (
 places AS (
     SELECT ST_AsMVT(place_rows, 'places', 4096, 'geom') AS mvt
     FROM (
-        SELECT class, name, population, ST_AsMVTGeom(p.geom, bounds.geom, 4096, 64, true) AS geom
+        SELECT class, name, population, tags, ST_AsMVTGeom(p.geom, bounds.geom, 4096, 64, true) AS geom
         FROM osm_places p, bounds
         WHERE $1 >= 2
           AND p.geom && bounds.geom
@@ -235,7 +236,7 @@ places AS (
 pois AS (
     SELECT ST_AsMVT(poi_rows, 'pois', 4096, 'geom') AS mvt
     FROM (
-        SELECT source, class, name, ST_AsMVTGeom(p.geom, bounds.geom, 4096, 64, true) AS geom
+        SELECT source, class, name, tags, ST_AsMVTGeom(p.geom, bounds.geom, 4096, 64, true) AS geom
         FROM osm_pois p, bounds
         WHERE $1 >= 15
           AND p.geom && bounds.geom
@@ -244,7 +245,7 @@ pois AS (
 boundaries AS (
     SELECT ST_AsMVT(boundary_rows, 'boundaries', 4096, 'geom') AS mvt
     FROM (
-        SELECT admin_level, name, ST_AsMVTGeom(b.geom, bounds.geom, 4096, 64, true) AS geom
+        SELECT admin_level, name, tags, ST_AsMVTGeom(b.geom, bounds.geom, 4096, 64, true) AS geom
         FROM osm_boundaries b, bounds
         WHERE b.geom && bounds.geom
           AND (

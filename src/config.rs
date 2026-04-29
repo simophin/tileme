@@ -8,7 +8,6 @@ pub struct Config {
     pub listen_addr: String,
     pub import_dir: PathBuf,
     pub osm2pgsql_bin: String,
-    pub osm2pgsql_flex_path: PathBuf,
     pub osm2pgsql_cache_mb: u32,
     pub log_json: bool,
     #[cfg(debug_assertions)]
@@ -36,13 +35,6 @@ struct Cli {
     #[arg(long, env = "TILEME_OSM2PGSQL_BIN", default_value = "osm2pgsql")]
     osm2pgsql_bin: String,
 
-    #[arg(
-        long,
-        env = "TILEME_OSM2PGSQL_FLEX",
-        default_value = "osm2pgsql/flex.lua"
-    )]
-    osm2pgsql_flex_path: PathBuf,
-
     #[arg(long, env = "TILEME_OSM2PGSQL_CACHE_MB", default_value_t = 1024)]
     osm2pgsql_cache_mb: u32,
 
@@ -65,7 +57,6 @@ impl From<Cli> for Config {
             listen_addr: cli.listen_addr,
             import_dir: cli.import_dir,
             osm2pgsql_bin: cli.osm2pgsql_bin,
-            osm2pgsql_flex_path: cli.osm2pgsql_flex_path,
             osm2pgsql_cache_mb: cli.osm2pgsql_cache_mb,
             log_json: cli.log_json,
             #[cfg(debug_assertions)]

@@ -22,7 +22,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -311,7 +312,8 @@ h2 {
   color: #424a46;
 }
 
-.field input {
+.field input,
+.field select {
   width: 100%;
   min-height: 42px;
   border: 1px solid #c9cbc4;
@@ -321,7 +323,8 @@ h2 {
   color: #202624;
 }
 
-.field input:focus {
+.field input:focus,
+.field select:focus {
   outline: 2px solid #2f6f88;
   outline-offset: 1px;
 }
@@ -372,6 +375,15 @@ h2 {
   color: #232927;
   font-size: 14px;
   font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.importName {
+  overflow: hidden;
+  color: #1f5f75;
+  font-size: 13px;
+  font-weight: 750;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -23,11 +24,13 @@ use crate::error::AppError;
 
 const IMPORT_JOB_CHANNEL: &str = "tileme_import_jobs";
 const JOB_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
-const JOB_COLUMNS: &str = "id, source_type::text AS source_type, source_value, mode::text AS mode, state::text AS state, progress_message, log_tail, error_message, cancel_requested, started_at, finished_at, heartbeat_at, created_at, updated_at";
+const JOB_COLUMNS: &str = "id, import_name, source_type::text AS source_type, source_value, mode::text AS mode, state::text AS state, progress_message, log_tail, error_message, cancel_requested, started_at, finished_at, heartbeat_at, created_at, updated_at";
+const OSM2PGSQL_FLEX_LUA: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/osm2pgsql/flex.lua"));
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route("/imports", post(create_import).get(list_imports))
+        .route("/import-names", get(list_import_names))
         .route("/imports/{id}", get(get_import))
         .route("/imports/{id}/cancel", post(cancel_import))
 }
@@ -41,6 +44,7 @@ pub enum ImportSource {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateImportRequest {
+    pub import_name: String,
     pub source: ImportSource,
     #[serde(default = "default_mode")]
     pub mode: String,
@@ -53,6 +57,7 @@ fn default_mode() -> String {
 #[derive(Debug, Serialize)]
 pub struct ImportJob {
     pub id: Uuid,
+    pub import_name: String,
     pub source_type: String,
     pub source_value: String,
     pub mode: String,
@@ -66,6 +71,11 @@ pub struct ImportJob {
     pub heartbeat_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportName {
+    pub name: String,
 }
 
 pub async fn mark_interrupted_jobs_failed(pool: &PgPool) -> Result<()> {
@@ -92,6 +102,7 @@ async fn create_import(
         ));
     }
 
+    let import_name = normalize_import_name(&request.import_name)?;
     let (source_type, source_value) = match request.source {
         ImportSource::LocalPath { path } => ("local_path", path),
         ImportSource::Url { url } => ("url", url),
@@ -99,14 +110,15 @@ async fn create_import(
 
     let row = sqlx::query(
         "WITH created AS (
-            INSERT INTO import_jobs (source_type, source_value, mode)
-            VALUES ($1::import_source_type, $2, $3::import_mode)
-            RETURNING id, source_type::text AS source_type, source_value, mode::text AS mode, state::text AS state, progress_message, log_tail, error_message, cancel_requested, started_at, finished_at, heartbeat_at, created_at, updated_at
+            INSERT INTO import_jobs (import_name, source_type, source_value, mode)
+            VALUES ($1, $2::import_source_type, $3, $4::import_mode)
+            RETURNING id, import_name, source_type::text AS source_type, source_value, mode::text AS mode, state::text AS state, progress_message, log_tail, error_message, cancel_requested, started_at, finished_at, heartbeat_at, created_at, updated_at
          ), notified AS (
             SELECT pg_notify('tileme_import_jobs', id::text) FROM created
          )
          SELECT created.* FROM created, notified",
     )
+    .bind(import_name)
     .bind(source_type)
     .bind(source_value)
     .bind(request.mode)
@@ -114,6 +126,37 @@ async fn create_import(
     .await?;
 
     Ok(Json(row_to_job(row)?))
+}
+
+async fn list_import_names(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<ImportName>>, AppError> {
+    let rows = sqlx::query(
+        "SELECT name
+         FROM (
+             SELECT import_name AS name, max(created_at) AS last_used_at
+             FROM import_jobs
+             GROUP BY import_name
+             UNION
+             SELECT import_name AS name, now() AS last_used_at
+             FROM osm_roads
+             GROUP BY import_name
+         ) names
+         GROUP BY name
+         ORDER BY max(last_used_at) DESC, name",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(ImportName {
+                name: row.try_get("name")?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(Json)
+        .map_err(AppError::from)
 }
 
 async fn list_imports(
@@ -152,7 +195,7 @@ async fn cancel_import(
         "UPDATE import_jobs
          SET cancel_requested = true, updated_at = now()
          WHERE id = $1 AND state IN ('queued', 'running')
-         RETURNING id, source_type::text AS source_type, source_value, mode::text AS mode, state::text AS state, progress_message, log_tail, error_message, cancel_requested, started_at, finished_at, heartbeat_at, created_at, updated_at",
+         RETURNING id, import_name, source_type::text AS source_type, source_value, mode::text AS mode, state::text AS state, progress_message, log_tail, error_message, cancel_requested, started_at, finished_at, heartbeat_at, created_at, updated_at",
     )
     .bind(id)
     .fetch_one(&state.pool)
@@ -308,7 +351,7 @@ async fn claim_job(pool: &PgPool) -> Result<Option<ImportJob>> {
              FOR UPDATE SKIP LOCKED
              LIMIT 1
          )
-         RETURNING id, source_type::text AS source_type, source_value, mode::text AS mode, state::text AS state, progress_message, log_tail, error_message, cancel_requested, started_at, finished_at, heartbeat_at, created_at, updated_at",
+         RETURNING id, import_name, source_type::text AS source_type, source_value, mode::text AS mode, state::text AS state, progress_message, log_tail, error_message, cancel_requested, started_at, finished_at, heartbeat_at, created_at, updated_at",
     )
     .fetch_optional(pool)
     .await?;
@@ -317,20 +360,27 @@ async fn claim_job(pool: &PgPool) -> Result<Option<ImportJob>> {
 
 async fn run_import_job(state: &Arc<AppState>, job: &ImportJob) -> Result<()> {
     let input_path = prepare_source(state, job).await?;
-    update_progress(&state.pool, job.id, "preparing database").await?;
-    prepare_database_for_replace(&state.pool).await?;
+    let staging_prefix = staging_table_prefix(job.id);
+    let result: Result<()> = async {
+        update_progress(&state.pool, job.id, "preparing database").await?;
+        drop_import_tables(&state.pool, &staging_prefix).await?;
 
-    update_progress(&state.pool, job.id, "running osm2pgsql").await?;
-    run_osm2pgsql(state, job.id, &input_path).await?;
+        update_progress(&state.pool, job.id, "running osm2pgsql").await?;
+        run_osm2pgsql(state, job, &staging_prefix, &input_path).await?;
 
-    update_progress(
-        &state.pool,
-        job.id,
-        "creating indexes and generalized tables",
-    )
-    .await?;
-    post_import_database_setup(&state.pool).await?;
+        update_progress(&state.pool, job.id, "replacing named import data").await?;
+        replace_import_data(&state.pool, &job.import_name, &staging_prefix).await?;
 
+        update_progress(&state.pool, job.id, "refreshing generalized tables").await?;
+        refresh_generalized_tables(&state.pool).await?;
+
+        Ok(())
+    }
+    .await;
+
+    let cleanup_result = drop_import_tables(&state.pool, &staging_prefix).await;
+    result?;
+    cleanup_result?;
     Ok(())
 }
 
@@ -367,20 +417,44 @@ async fn download_source(state: &Arc<AppState>, job: &ImportJob) -> Result<PathB
     Ok(target)
 }
 
-async fn run_osm2pgsql(state: &Arc<AppState>, job_id: Uuid, input_path: &Path) -> Result<()> {
+async fn run_osm2pgsql(
+    state: &Arc<AppState>,
+    job: &ImportJob,
+    staging_prefix: &str,
+    input_path: &Path,
+) -> Result<()> {
+    let mut flex_style = tempfile::Builder::new()
+        .prefix("tileme-osm2pgsql-flex-")
+        .suffix(".lua")
+        .tempfile_in(&state.config.import_dir)
+        .with_context(|| {
+            format!(
+                "failed to create temporary osm2pgsql flex style in {}",
+                state.config.import_dir.display()
+            )
+        })?;
+    flex_style
+        .write_all(OSM2PGSQL_FLEX_LUA.as_bytes())
+        .context("failed to write embedded osm2pgsql flex style")?;
+    flex_style
+        .flush()
+        .context("failed to flush embedded osm2pgsql flex style")?;
+
     let mut child = Command::new(&state.config.osm2pgsql_bin)
+        .env("TILEME_IMPORT_NAME", &job.import_name)
+        .env("TILEME_OSM_TABLE_PREFIX", staging_prefix)
         .arg("--create")
         .arg("--slim")
         .arg("--output")
         .arg("flex")
         .arg("--style")
-        .arg(&state.config.osm2pgsql_flex_path)
+        .arg(flex_style.path())
         .arg("--database")
         .arg(&state.config.database_url)
         .arg("--cache")
         .arg(state.config.osm2pgsql_cache_mb.to_string())
         .arg("--number-processes")
-        .arg("1")
+        .arg("4")
         .arg(input_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -398,14 +472,14 @@ async fn run_osm2pgsql(state: &Arc<AppState>, job_id: Uuid, input_path: &Path) -
         tokio::select! {
             Some(line) = rx.recv() => {
                 tail.push(line);
-                update_log_tail(&state.pool, job_id, tail.as_str()).await?;
+                update_log_tail(&state.pool, job.id, tail.as_str()).await?;
             }
             _ = sleep(Duration::from_secs(2)) => {
                 sqlx::query("UPDATE import_jobs SET heartbeat_at = now(), updated_at = now() WHERE id = $1")
-                    .bind(job_id)
+                    .bind(job.id)
                     .execute(&state.pool)
                     .await?;
-                if is_cancel_requested(&state.pool, job_id).await? {
+                if is_cancel_requested(&state.pool, job.id).await? {
                     let _ = child.kill().await;
                     anyhow::bail!("import cancelled");
                 }
@@ -453,46 +527,98 @@ impl LogTail {
     }
 }
 
-async fn prepare_database_for_replace(pool: &PgPool) -> Result<()> {
-    sqlx::query("DROP MATERIALIZED VIEW IF EXISTS gen_water_z0_5")
-        .execute(pool)
-        .await?;
-    sqlx::query("DROP MATERIALIZED VIEW IF EXISTS gen_water_z6_8")
-        .execute(pool)
-        .await?;
-    sqlx::query("DROP TABLE IF EXISTS osm_roads, osm_water, osm_landuse, osm_buildings, osm_addresses, osm_places, osm_pois, osm_boundaries, osm_admin_areas CASCADE")
+struct ImportTable {
+    name: &'static str,
+    columns: &'static str,
+}
+
+const IMPORT_TABLES: &[ImportTable] = &[
+    ImportTable {
+        name: "roads",
+        columns: "import_name, osm_id, class, name, ref, layer, tunnel, bridge, tags, geom",
+    },
+    ImportTable {
+        name: "water",
+        columns: "import_name, osm_id, class, name, tags, geom",
+    },
+    ImportTable {
+        name: "landuse",
+        columns: "import_name, osm_id, class, name, tags, geom",
+    },
+    ImportTable {
+        name: "buildings",
+        columns: "import_name, osm_id, class, name, house_number, height, tags, geom",
+    },
+    ImportTable {
+        name: "addresses",
+        columns: "import_name, osm_id, name, house_number, street, unit, suburb, city, state, postcode, country, tags, geom",
+    },
+    ImportTable {
+        name: "places",
+        columns: "import_name, osm_id, class, name, population, tags, geom",
+    },
+    ImportTable {
+        name: "pois",
+        columns: "import_name, osm_id, source, class, name, tags, geom",
+    },
+    ImportTable {
+        name: "boundaries",
+        columns: "import_name, osm_id, admin_level, name, tags, geom",
+    },
+    ImportTable {
+        name: "admin_areas",
+        columns: "import_name, osm_id, admin_level, name, tags, geom",
+    },
+];
+
+fn staging_table_prefix(job_id: Uuid) -> String {
+    format!("osm_import_{}_", job_id.simple())
+}
+
+async fn drop_import_tables(pool: &PgPool, prefix: &str) -> Result<()> {
+    let table_names = IMPORT_TABLES
+        .iter()
+        .map(|table| format!("{prefix}{}", table.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    sqlx::query(&format!("DROP TABLE IF EXISTS {table_names} CASCADE"))
         .execute(pool)
         .await?;
     Ok(())
 }
 
-async fn post_import_database_setup(pool: &PgPool) -> Result<()> {
-    let statements = [
-        "CREATE INDEX IF NOT EXISTS osm_roads_geom_idx ON osm_roads USING gist (geom)",
-        "CREATE INDEX IF NOT EXISTS osm_roads_class_idx ON osm_roads (class)",
-        "CREATE INDEX IF NOT EXISTS osm_water_geom_idx ON osm_water USING gist (geom)",
-        "CREATE INDEX IF NOT EXISTS osm_landuse_geom_idx ON osm_landuse USING gist (geom)",
-        "CREATE INDEX IF NOT EXISTS osm_landuse_class_idx ON osm_landuse (class)",
-        "CREATE INDEX IF NOT EXISTS osm_buildings_geom_idx ON osm_buildings USING gist (geom)",
-        "CREATE INDEX IF NOT EXISTS osm_addresses_geom_idx ON osm_addresses USING gist (geom)",
-        "CREATE INDEX IF NOT EXISTS osm_addresses_house_number_idx ON osm_addresses (house_number)",
-        "CREATE INDEX IF NOT EXISTS osm_places_geom_idx ON osm_places USING gist (geom)",
-        "CREATE INDEX IF NOT EXISTS osm_places_class_idx ON osm_places (class)",
-        "CREATE INDEX IF NOT EXISTS osm_pois_geom_idx ON osm_pois USING gist (geom)",
-        "CREATE INDEX IF NOT EXISTS osm_pois_source_class_idx ON osm_pois (source, class)",
-        "CREATE INDEX IF NOT EXISTS osm_boundaries_geom_idx ON osm_boundaries USING gist (geom)",
-        "CREATE INDEX IF NOT EXISTS osm_admin_areas_geom_idx ON osm_admin_areas USING gist (geom)",
-        "CREATE INDEX IF NOT EXISTS osm_admin_areas_admin_level_idx ON osm_admin_areas (admin_level)",
-        "CREATE MATERIALIZED VIEW gen_water_z0_5 AS SELECT osm_id, class, name, ST_Multi(ST_SimplifyPreserveTopology(geom, 8000))::geometry(MultiPolygon, 3857) AS geom FROM osm_water WHERE ST_Area(geom) > 10000000",
-        "CREATE INDEX gen_water_z0_5_geom_idx ON gen_water_z0_5 USING gist (geom)",
-        "CREATE MATERIALIZED VIEW gen_water_z6_8 AS SELECT osm_id, class, name, ST_Multi(ST_SimplifyPreserveTopology(geom, 1500))::geometry(MultiPolygon, 3857) AS geom FROM osm_water WHERE ST_Area(geom) > 1000000",
-        "CREATE INDEX gen_water_z6_8_geom_idx ON gen_water_z6_8 USING gist (geom)",
-    ];
+async fn replace_import_data(pool: &PgPool, import_name: &str, staging_prefix: &str) -> Result<()> {
+    let mut tx = pool.begin().await?;
 
-    for statement in statements {
-        sqlx::query(statement).execute(pool).await?;
+    for table in IMPORT_TABLES {
+        sqlx::query(&format!(
+            "DELETE FROM osm_{} WHERE import_name = $1",
+            table.name
+        ))
+        .bind(import_name)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(&format!(
+            "INSERT INTO osm_{} ({}) SELECT {} FROM {}{}",
+            table.name, table.columns, table.columns, staging_prefix, table.name
+        ))
+        .execute(&mut *tx)
+        .await?;
     }
 
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn refresh_generalized_tables(pool: &PgPool) -> Result<()> {
+    sqlx::query("REFRESH MATERIALIZED VIEW gen_water_z0_5")
+        .execute(pool)
+        .await?;
+    sqlx::query("REFRESH MATERIALIZED VIEW gen_water_z6_8")
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -526,9 +652,23 @@ async fn is_cancel_requested(pool: &PgPool, id: Uuid) -> Result<bool> {
     Ok(row.try_get("cancel_requested")?)
 }
 
+fn normalize_import_name(value: &str) -> Result<String, AppError> {
+    let name = value.trim();
+    if name.is_empty() {
+        return Err(AppError::BadRequest("import name is required".into()));
+    }
+    if name.chars().count() > 80 {
+        return Err(AppError::BadRequest(
+            "import name must be 80 characters or fewer".into(),
+        ));
+    }
+    Ok(name.to_owned())
+}
+
 fn row_to_job(row: sqlx::postgres::PgRow) -> Result<ImportJob> {
     Ok(ImportJob {
         id: row.try_get("id")?,
+        import_name: row.try_get("import_name")?,
         source_type: row.try_get::<String, _>("source_type")?,
         source_value: row.try_get("source_value")?,
         mode: row.try_get::<String, _>("mode")?,
