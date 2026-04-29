@@ -6,7 +6,6 @@ use clap::Parser;
 pub struct Config {
     pub database_url: String,
     pub listen_addr: String,
-    pub public_base_url: Option<String>,
     pub import_dir: PathBuf,
     pub osm2pgsql_bin: String,
     pub osm2pgsql_flex_path: PathBuf,
@@ -34,9 +33,6 @@ struct Cli {
 
     #[arg(long, env = "TILEME_LISTEN_ADDR", default_value = "127.0.0.1:3000")]
     listen_addr: String,
-
-    #[arg(long, env = "TILEME_PUBLIC_BASE_URL")]
-    public_base_url: Option<String>,
 
     #[arg(long, env = "TILEME_IMPORT_DIR", default_value = "/tmp/tileme-imports")]
     import_dir: PathBuf,
@@ -91,7 +87,6 @@ impl From<Cli> for Config {
         Self {
             database_url: cli.database_url,
             listen_addr: cli.listen_addr,
-            public_base_url: cli.public_base_url,
             import_dir: cli.import_dir,
             osm2pgsql_bin: cli.osm2pgsql_bin,
             osm2pgsql_flex_path: cli.osm2pgsql_flex_path,

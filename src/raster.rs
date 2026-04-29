@@ -353,20 +353,12 @@ async fn ensure_maplibre_style(state: &Arc<AppState>) -> Result<std::path::PathB
 }
 
 fn raster_base_url(state: &Arc<AppState>) -> String {
-    state
-        .config
-        .public_base_url
-        .clone()
-        .unwrap_or_else(|| {
-            let listen_addr = state.config.listen_addr.as_str();
-            if let Some(port) = listen_addr.strip_prefix("0.0.0.0:") {
-                format!("http://127.0.0.1:{port}")
-            } else {
-                format!("http://{listen_addr}")
-            }
-        })
-        .trim_end_matches('/')
-        .to_owned()
+    let listen_addr = state.config.listen_addr.as_str();
+    if let Some(port) = listen_addr.strip_prefix("0.0.0.0:") {
+        format!("http://127.0.0.1:{port}")
+    } else {
+        format!("http://{listen_addr}")
+    }
 }
 
 fn maplibre_style_json(base_url: &str) -> Result<String, AppError> {

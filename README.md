@@ -26,7 +26,6 @@ podman run --name tileme-postgis --replace -d \
 
 ```sh
 export DATABASE_URL=postgres://tileme:tileme@127.0.0.1:55432/tileme
-export TILEME_PUBLIC_BASE_URL=http://127.0.0.1:3000
 cargo run
 ```
 
@@ -34,8 +33,7 @@ The same settings can be supplied as command-line flags:
 
 ```sh
 cargo run -- \
-  --database-url postgres://tileme:tileme@127.0.0.1:55432/tileme \
-  --public-base-url http://127.0.0.1:3000
+  --database-url postgres://tileme:tileme@127.0.0.1:55432/tileme
 ```
 
 Useful endpoints:
@@ -72,7 +70,6 @@ Then, from the repository root:
 
 ```sh
 export DATABASE_URL=postgres://tileme:tileme@127.0.0.1:55432/tileme
-export TILEME_PUBLIC_BASE_URL=http://127.0.0.1:3000
 cargo run
 ```
 
@@ -124,7 +121,6 @@ Configuration is managed by `clap`; every setting can be provided as a CLI flag 
 | --- | --- | --- |
 | `--database-url` | `DATABASE_URL` | required |
 | `--listen-addr` | `TILEME_LISTEN_ADDR` | `127.0.0.1:3000` |
-| `--public-base-url` | `TILEME_PUBLIC_BASE_URL` | relative tile URLs |
 | `--import-dir` | `TILEME_IMPORT_DIR` | `/tmp/tileme-imports` |
 | `--osm2pgsql-bin` | `TILEME_OSM2PGSQL_BIN` | `osm2pgsql` |
 | `--osm2pgsql-flex-path` | `TILEME_OSM2PGSQL_FLEX` | `osm2pgsql/flex.lua` |
@@ -142,6 +138,6 @@ Import workers are woken through Postgres `LISTEN/NOTIFY` on the `tileme_import_
 
 Raster tiles are cached in Postgres using a render hash derived from the vector tile bytes, tile coordinate, renderer version, and style version. The cache stores PNG blobs separately from coordinate refs so identical render outputs can share storage where it is safe to do so.
 
-Tiles are served through zoom 18. The frontend uses raster tiles below zoom 14 and switches to vector tiles from zoom 14 upward. Raster rendering is done in-process with `maplibre_native`; the renderer loads a generated MapLibre style that points back at this server's `/tiles/{z}/{x}/{y}.pbf` endpoint, so `TILEME_PUBLIC_BASE_URL` should be set when the server is not reachable at its listen address.
+Tiles are served through zoom 18. The frontend uses raster tiles below zoom 14 and switches to vector tiles from zoom 14 upward. Raster rendering is done in-process with `maplibre_native`; the renderer loads a generated MapLibre style that points back at this server's `/tiles/{z}/{x}/{y}.pbf` endpoint through the server's listen address.
 
 The Rust server owns HTTP handling, cache lookup/storage, rendering, and LRU eviction.

@@ -42,18 +42,13 @@ struct VectorLayer {
     maxzoom: u8,
 }
 
-async fn tilejson(State(state): State<Arc<AppState>>) -> Json<TileJson> {
-    let tile_url = match &state.config.public_base_url {
-        Some(base) => format!("{}/tiles/{{z}}/{{x}}/{{y}}.pbf", base.trim_end_matches('/')),
-        None => "/tiles/{z}/{x}/{y}.pbf".into(),
-    };
-
+async fn tilejson() -> Json<TileJson> {
     Json(TileJson {
         tilejson: "3.0.0",
         name: "tileme",
         version: "0.1.0",
         scheme: "xyz",
-        tiles: vec![tile_url],
+        tiles: vec!["/tiles/{z}/{x}/{y}.pbf".into()],
         minzoom: 0,
         maxzoom: MAX_ZOOM,
         vector_layers: vec![
