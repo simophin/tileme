@@ -243,6 +243,7 @@ function TileMap() {
   let identifyMarker: maplibregl.Marker | null = null;
   let identifyAbort: AbortController | null = null;
   let pendingIdentifyTimeout: number | null = null;
+  let resizeObserver: ResizeObserver | null = null;
   let lastZoomIntentAt = 0;
   const [mapError, setMapError] = createSignal<string | null>(null);
   const [identifyResult, setIdentifyResult] = createSignal<IdentifyResponse | null>(null);
@@ -317,17 +318,21 @@ function TileMap() {
       }
     });
     map.on('moveend', persistCurrentMapView);
+    resizeObserver = new ResizeObserver(() => map?.resize());
+    resizeObserver.observe(containerRef);
     window.addEventListener('beforeunload', persistCurrentMapView);
 
     onCleanup(() => {
       cancelPendingIdentify();
       identifyAbort?.abort();
       identifyMarker?.remove();
+      resizeObserver?.disconnect();
       persistCurrentMapView();
       window.removeEventListener('beforeunload', persistCurrentMapView);
       map?.remove();
       identifyAbort = null;
       identifyMarker = null;
+      resizeObserver = null;
       map = null;
     });
   });

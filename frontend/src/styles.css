@@ -16,6 +16,11 @@ body {
   margin: 0;
 }
 
+#root {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
 button,
 input {
   font: inherit;
@@ -40,11 +45,15 @@ button:disabled {
   position: relative;
   overflow: hidden;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .mapPane {
   position: relative;
+  height: 100vh;
+  height: 100dvh;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .map {
@@ -378,12 +387,15 @@ h2 {
 
 @media (max-width: 900px) {
   .shell {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(420px, 58vh) auto;
+    min-height: 100vh;
+    min-height: 100dvh;
   }
 
   .mapPane {
-    min-height: 420px;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 100vh;
+    min-height: 100dvh;
   }
 
   .sidePanel {
