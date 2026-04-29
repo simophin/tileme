@@ -27,6 +27,24 @@ type ApiError = {
   error?: string;
 };
 
+type IdentifiedFeature = {
+  layer: string;
+  osm_id: number;
+  source: string | null;
+  class: string | null;
+  name: string;
+  distance_meters: number;
+  lat: number | null;
+  lon: number | null;
+};
+
+type IdentifyResponse = {
+  lat: number;
+  lon: number;
+  radius_meters: number;
+  features: IdentifiedFeature[];
+};
+
 const VECTOR_MIN_ZOOM = 14;
 const MAX_MAP_ZOOM = 18;
 
@@ -203,7 +221,12 @@ function App() {
 function TileMap() {
   let containerRef!: HTMLDivElement;
   let map: Map | null = null;
+  let identifyMarker: maplibregl.Marker | null = null;
+  let identifyAbort: AbortController | null = null;
   const [mapError, setMapError] = createSignal<string | null>(null);
+  const [identifyResult, setIdentifyResult] = createSignal<IdentifyResponse | null>(null);
+  const [identifyError, setIdentifyError] = createSignal<string | null>(null);
+  const [isIdentifying, setIsIdentifying] = createSignal(false);
 
   onMount(() => {
     const rasterTileUrlTemplate = `${window.location.origin}/raster/{z}/{x}/{y}.png`;
@@ -249,6 +272,9 @@ function TileMap() {
 
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-left');
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+    map.on('click', (event) => {
+      void identifyPoint(event.lngLat.lat, event.lngLat.lng);
+    });
     map.on('error', (event) => {
       const message = event.error?.message;
       if (message) {
@@ -257,17 +283,150 @@ function TileMap() {
     });
 
     onCleanup(() => {
+      identifyAbort?.abort();
+      identifyMarker?.remove();
       map?.remove();
+      identifyAbort = null;
+      identifyMarker = null;
       map = null;
     });
   });
+
+  async function identifyPoint(lat: number, lon: number) {
+    if (!map) {
+      return;
+    }
+
+    identifyAbort?.abort();
+    const controller = new AbortController();
+    identifyAbort = controller;
+
+    identifyMarker?.remove();
+    identifyMarker = new maplibregl.Marker({ color: '#2f6f88' }).setLngLat([lon, lat]).addTo(map);
+
+    setIdentifyResult({
+      lat,
+      lon,
+      radius_meters: identifyRadiusMeters(map.getZoom()),
+      features: [],
+    });
+    setIdentifyError(null);
+    setIsIdentifying(true);
+
+    const params = new URLSearchParams({
+      lat: lat.toFixed(7),
+      lon: lon.toFixed(7),
+      radius_meters: identifyRadiusMeters(map.getZoom()).toFixed(0),
+    });
+
+    try {
+      const response = await fetch(`/identify?${params}`, { signal: controller.signal });
+      if (!response.ok) {
+        throw new Error(await readApiError(response));
+      }
+      setIdentifyResult((await response.json()) as IdentifyResponse);
+    } catch (error) {
+      if (controller.signal.aborted) {
+        return;
+      }
+      setIdentifyError(error instanceof Error ? error.message : 'Unable to identify this point');
+    } finally {
+      if (identifyAbort === controller) {
+        setIsIdentifying(false);
+      }
+    }
+  }
+
+  function clearIdentify() {
+    identifyAbort?.abort();
+    identifyAbort = null;
+    identifyMarker?.remove();
+    identifyMarker = null;
+    setIdentifyResult(null);
+    setIdentifyError(null);
+    setIsIdentifying(false);
+  }
 
   return (
     <>
       <div ref={containerRef} class="map" />
       <Show when={mapError()}>{(error) => <div class="mapError">{error()}</div>}</Show>
+      <Show when={identifyResult()}>
+        {(result) => (
+          <section class="identifyPanel" aria-label="Clicked point details">
+            <div class="identifyHeader">
+              <div>
+                <h2>Point</h2>
+                <p>{formatCoordinate(result().lat, result().lon)}</p>
+              </div>
+              <button type="button" class="iconButton" onClick={clearIdentify}>
+                Close
+              </button>
+            </div>
+
+            <Show when={isIdentifying()}>
+              <p class="identifyStatus">Looking up nearby names</p>
+            </Show>
+
+            <Show when={identifyError()}>
+              {(error) => <p class="errorText">{error()}</p>}
+            </Show>
+
+            <Show
+              when={!isIdentifying() && !identifyError() && result().features.length > 0}
+              fallback={
+                <Show when={!isIdentifying() && !identifyError()}>
+                  <p class="emptyState">No named POIs found within {formatMeters(result().radius_meters)}.</p>
+                </Show>
+              }
+            >
+              <div class="identifyList">
+                <For each={result().features}>
+                  {(feature) => (
+                    <article class="identifyItem">
+                      <div>
+                        <strong>{feature.name}</strong>
+                        <span>{featureLabel(feature)}</span>
+                      </div>
+                      <small>{formatMeters(feature.distance_meters)}</small>
+                    </article>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </section>
+        )}
+      </Show>
     </>
   );
+}
+
+function identifyRadiusMeters(zoom: number) {
+  if (zoom >= 17) {
+    return 25;
+  }
+  if (zoom >= 15) {
+    return 45;
+  }
+  if (zoom >= 12) {
+    return 85;
+  }
+  return 150;
+}
+
+function formatCoordinate(lat: number, lon: number) {
+  return `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+}
+
+function featureLabel(feature: IdentifiedFeature) {
+  return [feature.layer, feature.source, feature.class].filter(Boolean).join(' / ');
+}
+
+function formatMeters(value: number) {
+  if (value < 1) {
+    return 'at point';
+  }
+  return `${Math.round(value)} m`;
 }
 
 const mapLayers: maplibregl.LayerSpecification[] = [

@@ -2,6 +2,7 @@ mod app;
 mod config;
 mod db;
 mod error;
+mod identify;
 mod imports;
 mod metrics;
 mod raster;
@@ -61,6 +62,7 @@ async fn main() -> anyhow::Result<()> {
 fn router(state: Arc<AppState>) -> Router {
     let app = Router::new()
         .merge(app::router())
+        .merge(identify::router())
         .merge(imports::router())
         .merge(raster::router())
         .merge(tiles::router());

@@ -65,6 +65,84 @@ button:disabled {
   box-shadow: 0 10px 24px rgb(0 0 0 / 18%);
 }
 
+.identifyPanel {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 18;
+  display: grid;
+  gap: 12px;
+  width: min(360px, calc(100vw - 32px));
+  max-height: min(430px, calc(100vh - 120px));
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid #d3d5ce;
+  border-radius: 8px;
+  background: #fffef8;
+  box-shadow: 0 12px 30px rgb(0 0 0 / 18%);
+}
+
+.identifyHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.identifyHeader p {
+  margin-top: 4px;
+  color: #37413c;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+}
+
+.identifyStatus {
+  color: #4c5a54;
+  font-size: 13px;
+}
+
+.identifyList {
+  display: grid;
+  gap: 8px;
+}
+
+.identifyItem {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid #dedfd8;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.identifyItem div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.identifyItem strong,
+.identifyItem span {
+  overflow-wrap: anywhere;
+}
+
+.identifyItem strong {
+  color: #202624;
+  font-size: 14px;
+}
+
+.identifyItem span,
+.identifyItem small {
+  color: #68716c;
+  font-size: 12px;
+}
+
+.identifyItem small {
+  flex: 0 0 auto;
+}
+
 .importHandle {
   position: fixed;
   top: 18px;
@@ -312,5 +390,9 @@ h2 {
     max-height: none;
     border-top: 1px solid #d7d7cf;
     border-left: 0;
+  }
+
+  .identifyPanel {
+    bottom: 12px;
   }
 }
