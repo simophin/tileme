@@ -27,6 +27,9 @@ type ApiError = {
   error?: string;
 };
 
+const VECTOR_MIN_ZOOM = 14;
+const MAX_MAP_ZOOM = 18;
+
 function App() {
   const [jobs, setJobs] = createSignal<ImportJob[]>([]);
   const [jobsError, setJobsError] = createSignal<string | null>(null);
@@ -203,33 +206,44 @@ function TileMap() {
   const [mapError, setMapError] = createSignal<string | null>(null);
 
   onMount(() => {
-    const tileUrlTemplate = `${window.location.origin}/raster/{z}/{x}/{y}.png`;
+    const rasterTileUrlTemplate = `${window.location.origin}/raster/{z}/{x}/{y}.png`;
+    const vectorTileUrlTemplate = `${window.location.origin}/tiles/{z}/{x}/{y}.pbf`;
 
     map = new maplibregl.Map({
       container: containerRef,
       style: {
         version: 8,
+        glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
         sources: {
-          tileme: {
+          'tileme-raster': {
             type: 'raster',
-            tiles: [tileUrlTemplate],
+            tiles: [rasterTileUrlTemplate],
             minzoom: 0,
-            maxzoom: 16,
+            maxzoom: VECTOR_MIN_ZOOM,
             scheme: 'xyz',
             tileSize: 256,
+          },
+          tileme: {
+            type: 'vector',
+            tiles: [vectorTileUrlTemplate],
+            minzoom: VECTOR_MIN_ZOOM,
+            maxzoom: MAX_MAP_ZOOM,
+            scheme: 'xyz',
           },
         },
         layers: [
           {
             id: 'tileme-raster',
             type: 'raster',
-            source: 'tileme',
+            source: 'tileme-raster',
+            maxzoom: VECTOR_MIN_ZOOM,
           },
+          ...mapLayers,
         ],
       },
       center: [133.7751, -25.2744],
       zoom: 3,
-      maxZoom: 16,
+      maxZoom: MAX_MAP_ZOOM,
       attributionControl: false,
     });
 
@@ -260,6 +274,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
   {
     id: 'background',
     type: 'background',
+    minzoom: VECTOR_MIN_ZOOM,
     paint: { 'background-color': '#edf0e7' },
   },
   {
@@ -267,6 +282,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'fill',
     source: 'tileme',
     'source-layer': 'water',
+    minzoom: VECTOR_MIN_ZOOM,
     paint: { 'fill-color': '#8fb9d4', 'fill-opacity': 0.92 },
   },
   {
@@ -274,7 +290,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'fill',
     source: 'tileme',
     'source-layer': 'landuse',
-    minzoom: 8,
+    minzoom: VECTOR_MIN_ZOOM,
     paint: { 'fill-color': '#bfd4ad', 'fill-opacity': 0.5 },
   },
   {
@@ -282,6 +298,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'line',
     source: 'tileme',
     'source-layer': 'boundaries',
+    minzoom: VECTOR_MIN_ZOOM,
     paint: {
       'line-color': ['case', ['<=', ['coalesce', ['get', 'admin_level'], 99], 4], '#6f5f53', '#9a8b7b'],
       'line-opacity': ['interpolate', ['linear'], ['zoom'], 2, 0.55, 8, 0.85, 12, 0.65],
@@ -293,7 +310,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'line',
     source: 'tileme',
     'source-layer': 'roads',
-    minzoom: 5,
+    minzoom: VECTOR_MIN_ZOOM,
     paint: {
       'line-color': '#b8afa4',
       'line-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.5, 10, 0.75, 14, 0.9],
@@ -305,7 +322,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'line',
     source: 'tileme',
     'source-layer': 'roads',
-    minzoom: 5,
+    minzoom: VECTOR_MIN_ZOOM,
     paint: {
       'line-color': ['case', ['in', ['get', 'class'], ['literal', ['motorway', 'trunk']]], '#f1b35f', '#fff8ea'],
       'line-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.72, 10, 0.9, 14, 1],
@@ -317,8 +334,108 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'fill',
     source: 'tileme',
     'source-layer': 'buildings',
-    minzoom: 14,
+    minzoom: VECTOR_MIN_ZOOM,
     paint: { 'fill-color': '#c6a889', 'fill-opacity': 0.76 },
+  },
+  {
+    id: 'water-labels',
+    type: 'symbol',
+    source: 'tileme',
+    'source-layer': 'water',
+    minzoom: VECTOR_MIN_ZOOM,
+    filter: ['has', 'name'],
+    layout: {
+      'text-field': ['get', 'name'],
+      'text-font': ['Noto Sans Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 14, 11, 18, 13],
+      'text-allow-overlap': false,
+    },
+    paint: {
+      'text-color': '#31677f',
+      'text-halo-color': '#d9edf5',
+      'text-halo-width': 1.1,
+    },
+  },
+  {
+    id: 'landuse-labels',
+    type: 'symbol',
+    source: 'tileme',
+    'source-layer': 'landuse',
+    minzoom: VECTOR_MIN_ZOOM,
+    filter: [
+      'all',
+      ['has', 'name'],
+      ['in', ['get', 'class'], ['literal', ['park', 'wood', 'forest', 'nature_reserve', 'recreation_ground', 'grass']]],
+    ],
+    layout: {
+      'text-field': ['get', 'name'],
+      'text-font': ['Noto Sans Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 14, 10, 18, 12],
+      'text-allow-overlap': false,
+    },
+    paint: {
+      'text-color': '#4f7447',
+      'text-halo-color': '#eff6e8',
+      'text-halo-width': 1.1,
+    },
+  },
+  {
+    id: 'road-labels',
+    type: 'symbol',
+    source: 'tileme',
+    'source-layer': 'roads',
+    minzoom: VECTOR_MIN_ZOOM,
+    layout: {
+      'symbol-placement': 'line',
+      'text-field': ['coalesce', ['get', 'name'], ['get', 'ref']],
+      'text-font': ['Noto Sans Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 14, 10, 18, 12],
+      'symbol-spacing': ['interpolate', ['linear'], ['zoom'], 14, 280, 18, 220],
+    },
+    paint: {
+      'text-color': '#5c554c',
+      'text-halo-color': '#fff8ea',
+      'text-halo-width': 1.2,
+    },
+  },
+  {
+    id: 'poi-labels',
+    type: 'symbol',
+    source: 'tileme',
+    'source-layer': 'pois',
+    minzoom: 15,
+    layout: {
+      'text-field': ['get', 'name'],
+      'text-font': ['Noto Sans Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 15, 9, 18, 11],
+      'text-anchor': 'top',
+      'text-offset': [0, 0.6],
+      'text-allow-overlap': false,
+      'symbol-sort-key': ['match', ['get', 'source'], 'tourism', 1, 'amenity', 2, 'leisure', 3, 'shop', 4, 5],
+    },
+    paint: {
+      'text-color': '#4f463b',
+      'text-halo-color': '#fffdf5',
+      'text-halo-width': 1.1,
+    },
+  },
+  {
+    id: 'places',
+    type: 'symbol',
+    source: 'tileme',
+    'source-layer': 'places',
+    minzoom: VECTOR_MIN_ZOOM,
+    layout: {
+      'text-field': ['get', 'name'],
+      'text-font': ['Noto Sans Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 14, 11, 18, 13],
+      'text-allow-overlap': false,
+    },
+    paint: {
+      'text-color': '#26302d',
+      'text-halo-color': '#ffffff',
+      'text-halo-width': 1.2,
+    },
   },
 ];
 

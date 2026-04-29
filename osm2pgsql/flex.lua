@@ -40,6 +40,14 @@ local places = osm2pgsql.define_node_table('osm_places', {
   { column = 'geom', type = 'point', projection = srid },
 })
 
+local pois = osm2pgsql.define_node_table('osm_pois', {
+  { column = 'osm_id', type = 'bigint' },
+  { column = 'source', type = 'text' },
+  { column = 'class', type = 'text' },
+  { column = 'name', type = 'text' },
+  { column = 'geom', type = 'point', projection = srid },
+})
+
 local boundaries = osm2pgsql.define_relation_table('osm_boundaries', {
   { column = 'osm_id', type = 'bigint' },
   { column = 'admin_level', type = 'int' },
@@ -61,6 +69,78 @@ local function parse_height(value)
   local number = string.match(value, '([0-9%.]+)')
   if number == nil then return nil end
   return tonumber(number)
+end
+
+local amenity_pois = {
+  arts_centre = true,
+  bank = true,
+  bar = true,
+  biergarten = true,
+  cafe = true,
+  cinema = true,
+  clinic = true,
+  college = true,
+  community_centre = true,
+  courthouse = true,
+  doctors = true,
+  fast_food = true,
+  fire_station = true,
+  fuel = true,
+  hospital = true,
+  library = true,
+  marketplace = true,
+  pharmacy = true,
+  place_of_worship = true,
+  police = true,
+  post_office = true,
+  pub = true,
+  restaurant = true,
+  school = true,
+  theatre = true,
+  townhall = true,
+  university = true,
+}
+
+local tourism_pois = {
+  aquarium = true,
+  attraction = true,
+  camp_site = true,
+  caravan_site = true,
+  gallery = true,
+  guest_house = true,
+  hostel = true,
+  hotel = true,
+  information = true,
+  motel = true,
+  museum = true,
+  theme_park = true,
+  viewpoint = true,
+  zoo = true,
+}
+
+local leisure_pois = {
+  fitness_centre = true,
+  golf_course = true,
+  playground = true,
+  sports_centre = true,
+  stadium = true,
+  swimming_pool = true,
+}
+
+local function poi_source_and_class(tags)
+  if tags.tourism and tourism_pois[tags.tourism] then
+    return 'tourism', tags.tourism
+  end
+  if tags.amenity and amenity_pois[tags.amenity] then
+    return 'amenity', tags.amenity
+  end
+  if tags.leisure and leisure_pois[tags.leisure] then
+    return 'leisure', tags.leisure
+  end
+  if tags.shop and tags.shop ~= 'no' and tags.shop ~= 'vacant' then
+    return 'shop', tags.shop
+  end
+  return nil, nil
 end
 
 function osm2pgsql.process_way(object)
@@ -123,6 +203,19 @@ function osm2pgsql.process_node(object)
       population = as_int(object.tags.population),
       geom = object:as_point()
     })
+  end
+
+  if object.tags.name then
+    local source, class = poi_source_and_class(object.tags)
+    if source then
+      pois:insert({
+        osm_id = object.id,
+        source = source,
+        class = class,
+        name = object.tags.name,
+        geom = object:as_point()
+      })
+    end
   end
 end
 

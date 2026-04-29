@@ -71,7 +71,7 @@ struct Cli {
     )]
     raster_cache_touch_interval_seconds: i64,
 
-    #[arg(long, env = "TILEME_RASTER_STYLE_VERSION", default_value_t = 1)]
+    #[arg(long, env = "TILEME_RASTER_STYLE_VERSION", default_value_t = 3)]
     raster_style_version: i32,
 
     #[arg(long, env = "TILEME_LOG_JSON", default_value_t = false)]

@@ -379,7 +379,7 @@ fn maplibre_style_json(base_url: &str) -> Result<String, AppError> {
                 "type": "vector",
                 "tiles": [format!("{base_url}/tiles/{{z}}/{{x}}/{{y}}.pbf")],
                 "minzoom": 0,
-                "maxzoom": 16
+                "maxzoom": 18
             }
         },
         "layers": [
@@ -456,6 +456,48 @@ fn maplibre_style_json(base_url: &str) -> Result<String, AppError> {
                 "paint": { "fill-color": "#c6a889", "fill-opacity": 0.76 }
             },
             {
+                "id": "water-labels",
+                "type": "symbol",
+                "source": "tileme",
+                "source-layer": "water",
+                "minzoom": 8,
+                "filter": ["has", "name"],
+                "layout": {
+                    "text-field": ["get", "name"],
+                    "text-font": ["Noto Sans Regular"],
+                    "text-size": ["interpolate", ["linear"], ["zoom"], 8, 9, 12, 11, 16, 12],
+                    "text-allow-overlap": false
+                },
+                "paint": {
+                    "text-color": "#31677f",
+                    "text-halo-color": "#d9edf5",
+                    "text-halo-width": 1.1
+                }
+            },
+            {
+                "id": "landuse-labels",
+                "type": "symbol",
+                "source": "tileme",
+                "source-layer": "landuse",
+                "minzoom": 12,
+                "filter": [
+                    "all",
+                    ["has", "name"],
+                    ["in", ["get", "class"], ["literal", ["park", "wood", "forest", "nature_reserve", "recreation_ground", "grass"]]]
+                ],
+                "layout": {
+                    "text-field": ["get", "name"],
+                    "text-font": ["Noto Sans Regular"],
+                    "text-size": ["interpolate", ["linear"], ["zoom"], 12, 9, 15, 11],
+                    "text-allow-overlap": false
+                },
+                "paint": {
+                    "text-color": "#4f7447",
+                    "text-halo-color": "#eff6e8",
+                    "text-halo-width": 1.1
+                }
+            },
+            {
                 "id": "road-labels",
                 "type": "symbol",
                 "source": "tileme",
@@ -472,6 +514,35 @@ fn maplibre_style_json(base_url: &str) -> Result<String, AppError> {
                     "text-color": "#5c554c",
                     "text-halo-color": "#fff8ea",
                     "text-halo-width": 1.2
+                }
+            },
+            {
+                "id": "poi-labels",
+                "type": "symbol",
+                "source": "tileme",
+                "source-layer": "pois",
+                "minzoom": 15,
+                "layout": {
+                    "text-field": ["get", "name"],
+                    "text-font": ["Noto Sans Regular"],
+                    "text-size": ["interpolate", ["linear"], ["zoom"], 15, 9, 16, 10],
+                    "text-anchor": "top",
+                    "text-offset": [0, 0.6],
+                    "text-allow-overlap": false,
+                    "symbol-sort-key": [
+                        "match",
+                        ["get", "source"],
+                        "tourism", 1,
+                        "amenity", 2,
+                        "leisure", 3,
+                        "shop", 4,
+                        5
+                    ]
+                },
+                "paint": {
+                    "text-color": "#4f463b",
+                    "text-halo-color": "#fffdf5",
+                    "text-halo-width": 1.1
                 }
             },
             {

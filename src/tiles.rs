@@ -14,7 +14,7 @@ use crate::app::AppState;
 use crate::db;
 use crate::error::AppError;
 
-pub const MAX_ZOOM: u8 = 16;
+pub const MAX_ZOOM: u8 = 18;
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
@@ -62,6 +62,7 @@ async fn tilejson(State(state): State<Arc<AppState>>) -> Json<TileJson> {
             layer("roads", 5, MAX_ZOOM),
             layer("buildings", 14, MAX_ZOOM),
             layer("places", 2, MAX_ZOOM),
+            layer("pois", 15, MAX_ZOOM),
             layer("boundaries", 0, MAX_ZOOM),
         ],
     })
@@ -72,6 +73,7 @@ fn layer(id: &'static str, minzoom: u8, maxzoom: u8) -> VectorLayer {
         id,
         fields: serde_json::json!({
             "class": "String",
+            "source": "String",
             "name": "String",
             "ref": "String",
             "admin_level": "Number"
@@ -286,6 +288,15 @@ places AS (
           )
     ) place_rows
 ),
+pois AS (
+    SELECT ST_AsMVT(poi_rows, 'pois', 4096, 'geom') AS mvt
+    FROM (
+        SELECT source, class, name, ST_AsMVTGeom(p.geom, bounds.geom, 4096, 64, true) AS geom
+        FROM osm_pois p, bounds
+        WHERE $1 >= 15
+          AND p.geom && bounds.geom
+    ) poi_rows
+),
 boundaries AS (
     SELECT ST_AsMVT(boundary_rows, 'boundaries', 4096, 'geom') AS mvt
     FROM (
@@ -305,6 +316,7 @@ SELECT
     COALESCE((SELECT mvt FROM roads), '\x'::bytea) ||
     COALESCE((SELECT mvt FROM buildings), '\x'::bytea) ||
     COALESCE((SELECT mvt FROM places), '\x'::bytea) ||
+    COALESCE((SELECT mvt FROM pois), '\x'::bytea) ||
     COALESCE((SELECT mvt FROM boundaries), '\x'::bytea) AS mvt
 "#
     );
