@@ -335,6 +335,10 @@ function osm2pgsql.process_way(object)
   local landuse_tag = object.tags.landuse
   local leisure = object.tags.leisure
 
+  if not object.is_closed then
+    return
+  end
+
   if natural == 'water' or waterway == 'riverbank' then
     local geom = object:as_multipolygon()
     if not geom then

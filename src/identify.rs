@@ -4,6 +4,7 @@ use axum::extract::{Query, State};
 use axum::routing::get;
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::Row;
 
 use crate::app::AppState;
@@ -44,6 +45,7 @@ struct IdentifiedFeature {
     source: Option<String>,
     class: Option<String>,
     name: String,
+    tags: Value,
     distance_meters: f64,
     lat: Option<f64>,
     lon: Option<f64>,
@@ -104,6 +106,7 @@ matches AS (
             WHEN b.class IS NOT NULL AND b.class <> 'yes' THEN initcap(replace(b.class, '_', ' '))
             ELSE 'Building'
         END AS name,
+        b.tags,
         ST_Distance(ST_Transform(ST_PointOnSurface(b.geom), 4326)::geography, click.geog) AS distance_meters,
         NULL::double precision AS lat,
         NULL::double precision AS lon,
@@ -120,6 +123,7 @@ matches AS (
         p.source,
         p.class,
         p.name,
+        p.tags,
         ST_Distance(ST_Transform(p.geom, 4326)::geography, click.geog) AS distance_meters,
         ST_Y(ST_Transform(p.geom, 4326)) AS lat,
         ST_X(ST_Transform(p.geom, 4326)) AS lon,
@@ -136,6 +140,7 @@ matches AS (
         'place' AS source,
         p.class,
         p.name,
+        p.tags,
         ST_Distance(ST_Transform(p.geom, 4326)::geography, click.geog) AS distance_meters,
         ST_Y(ST_Transform(p.geom, 4326)) AS lat,
         ST_X(ST_Transform(p.geom, 4326)) AS lon,
@@ -152,6 +157,7 @@ matches AS (
         'highway' AS source,
         r.class,
         COALESCE(r.name, r.ref) AS name,
+        r.tags,
         ST_Distance(ST_Transform(r.geom, 4326)::geography, click.geog) AS distance_meters,
         NULL::double precision AS lat,
         NULL::double precision AS lon,
@@ -169,6 +175,7 @@ matches AS (
         'natural' AS source,
         w.class,
         w.name,
+        w.tags,
         0::double precision AS distance_meters,
         NULL::double precision AS lat,
         NULL::double precision AS lon,
@@ -186,6 +193,7 @@ matches AS (
         'landuse' AS source,
         l.class,
         l.name,
+        l.tags,
         0::double precision AS distance_meters,
         NULL::double precision AS lat,
         NULL::double precision AS lon,
@@ -195,7 +203,7 @@ matches AS (
       AND l.geom && click.geom
       AND ST_Intersects(l.geom, click.geom)
 )
-SELECT layer, osm_id, source, class, name, distance_meters, lat, lon
+SELECT layer, osm_id, source, class, name, tags, distance_meters, lat, lon
 FROM matches
 ORDER BY priority, distance_meters, name
 LIMIT $5
@@ -218,6 +226,7 @@ LIMIT $5
                 source: row.try_get("source")?,
                 class: row.try_get("class")?,
                 name: row.try_get("name")?,
+                tags: row.try_get("tags")?,
                 distance_meters: row.try_get("distance_meters")?,
                 lat: row.try_get("lat")?,
                 lon: row.try_get("lon")?,

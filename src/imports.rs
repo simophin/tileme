@@ -601,7 +601,7 @@ async fn replace_import_data(pool: &PgPool, import_name: &str, staging_prefix: &
         .await?;
 
         sqlx::query(&format!(
-            "INSERT INTO osm_{} ({}) SELECT {} FROM {}{}",
+            "INSERT INTO osm_{} ({}) SELECT {} FROM {}{} WHERE geom IS NOT NULL",
             table.name, table.columns, table.columns, staging_prefix, table.name
         ))
         .execute(&mut *tx)

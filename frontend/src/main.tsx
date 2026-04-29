@@ -38,6 +38,7 @@ type IdentifiedFeature = {
   source: string | null;
   class: string | null;
   name: string;
+  tags: Record<string, unknown>;
   distance_meters: number;
   lat: number | null;
   lon: number | null;
@@ -689,6 +690,18 @@ function TileMap() {
                       <div>
                         <strong>{feature.name}</strong>
                         <span>{featureLabel(feature)}</span>
+                        <Show when={poiTagItems(feature).length > 0}>
+                          <dl class="poiTags">
+                            <For each={poiTagItems(feature)}>
+                              {(tag) => (
+                                <div>
+                                  <dt>{tag.label}</dt>
+                                  <dd>{tag.value}</dd>
+                                </div>
+                              )}
+                            </For>
+                          </dl>
+                        </Show>
                       </div>
                       <small>{formatMeters(feature.distance_meters)}</small>
                     </article>
@@ -770,6 +783,85 @@ function formatCoordinate(lat: number, lon: number) {
 
 function featureLabel(feature: IdentifiedFeature) {
   return [feature.layer, feature.source, feature.class].filter(Boolean).join(' / ');
+}
+
+type PoiTagItem = {
+  key: string;
+  label: string;
+  value: string;
+};
+
+const POI_TAGS: Array<{ key: string; label: string }> = [
+  { key: 'cuisine', label: 'Cuisine' },
+  { key: 'opening_hours', label: 'Hours' },
+  { key: 'phone', label: 'Phone' },
+  { key: 'contact:phone', label: 'Phone' },
+  { key: 'website', label: 'Website' },
+  { key: 'contact:website', label: 'Website' },
+  { key: 'wheelchair', label: 'Wheelchair' },
+  { key: 'internet_access', label: 'Internet' },
+  { key: 'outdoor_seating', label: 'Outdoor seating' },
+  { key: 'takeaway', label: 'Takeaway' },
+  { key: 'delivery', label: 'Delivery' },
+  { key: 'drive_through', label: 'Drive-through' },
+  { key: 'operator', label: 'Operator' },
+  { key: 'brand', label: 'Brand' },
+  { key: 'diet:vegetarian', label: 'Vegetarian' },
+  { key: 'diet:vegan', label: 'Vegan' },
+  { key: 'diet:halal', label: 'Halal' },
+  { key: 'diet:kosher', label: 'Kosher' },
+  { key: 'toilets', label: 'Toilets' },
+  { key: 'fee', label: 'Fee' },
+  { key: 'heritage', label: 'Heritage' },
+  { key: 'start_date', label: 'Opened' },
+];
+
+function poiTagItems(feature: IdentifiedFeature): PoiTagItem[] {
+  if (feature.layer !== 'poi') {
+    return [];
+  }
+
+  const seenLabels = new Set<string>();
+  const items: PoiTagItem[] = [];
+
+  for (const tag of POI_TAGS) {
+    const value = formatTagValue(feature.tags?.[tag.key]);
+    if (!value || seenLabels.has(tag.label)) {
+      continue;
+    }
+    seenLabels.add(tag.label);
+    items.push({ ...tag, value });
+  }
+
+  return items.slice(0, 6);
+}
+
+function formatTagValue(value: unknown) {
+  if (typeof value === 'boolean') {
+    return value ? 'Yes' : 'No';
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed === 'yes') {
+    return 'Yes';
+  }
+  if (trimmed === 'no') {
+    return 'No';
+  }
+  if (trimmed === 'limited') {
+    return 'Limited';
+  }
+
+  return trimmed.replace(/_/g, ' ');
 }
 
 function formatMeters(value: number) {

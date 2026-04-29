@@ -159,6 +159,42 @@ button:disabled {
   flex: 0 0 auto;
 }
 
+.poiTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 0;
+}
+
+.poiTags div {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 24px;
+  gap: 5px;
+  padding: 3px 7px;
+  border: 1px solid #d9ddd5;
+  border-radius: 6px;
+  background: #f6f8f2;
+}
+
+.poiTags dt,
+.poiTags dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.poiTags dt {
+  color: #53615a;
+  font-weight: 750;
+}
+
+.poiTags dd {
+  color: #25302b;
+}
+
 .importHandle {
   position: fixed;
   top: 18px;
