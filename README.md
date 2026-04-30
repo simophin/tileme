@@ -112,6 +112,8 @@ curl -X POST http://127.0.0.1:3000/imports \
   -d '{"source":{"type":"url","url":"https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf"},"mode":"replace"}'
 ```
 
+URL imports are streamed directly into `osm2pgsql`; no source file is staged on disk first.
+
 Import jobs are persistent in Postgres. On startup, any job left in `running` is marked `failed`; restart/resume is intentionally simple.
 
 ## Configuration
@@ -122,7 +124,6 @@ Configuration is managed by `clap`; every setting can be provided as a CLI flag 
 | --- | --- | --- |
 | `--database-url` | `DATABASE_URL` | required |
 | `--listen-addr` | `TILEME_LISTEN_ADDR` | `127.0.0.1:3000` |
-| `--import-dir` | `TILEME_IMPORT_DIR` | `/tmp/tileme-imports` |
 | `--osm2pgsql-bin` | `TILEME_OSM2PGSQL_BIN` | `osm2pgsql` |
 | `--osm2pgsql-cache-mb` | `TILEME_OSM2PGSQL_CACHE_MB` | `1024` |
 | `--log-json` | `TILEME_LOG_JSON` | `false` |

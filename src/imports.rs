@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 
@@ -27,6 +27,11 @@ const JOB_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 const JOB_COLUMNS: &str = "id, import_name, source_type::text AS source_type, source_value, mode::text AS mode, state::text AS state, progress_message, log_tail, error_message, cancel_requested, started_at, finished_at, heartbeat_at, created_at, updated_at";
 const OSM2PGSQL_FLEX_LUA: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/osm2pgsql/flex.lua"));
+
+enum PreparedSource {
+    LocalPath(PathBuf),
+    Url(String),
+}
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
@@ -412,14 +417,14 @@ async fn claim_job(pool: &PgPool) -> Result<Option<ImportJob>> {
 }
 
 async fn run_import_job(state: &Arc<AppState>, job: &ImportJob) -> Result<()> {
-    let input_path = prepare_source(state, job).await?;
+    let source = prepare_source(state, job).await?;
     let staging_prefix = staging_table_prefix(job.id);
     let result: Result<()> = async {
         update_progress(&state.pool, job.id, "preparing database").await?;
         drop_import_tables(&state.pool, &staging_prefix).await?;
 
         update_progress(&state.pool, job.id, "running osm2pgsql").await?;
-        run_osm2pgsql(state, job, &staging_prefix, &input_path).await?;
+        run_osm2pgsql(state, job, &staging_prefix, source).await?;
 
         update_progress(&state.pool, job.id, "replacing named import data").await?;
         replace_import_data(&state.pool, &job.import_name, &staging_prefix).await?;
@@ -437,55 +442,36 @@ async fn run_import_job(state: &Arc<AppState>, job: &ImportJob) -> Result<()> {
     Ok(())
 }
 
-async fn prepare_source(state: &Arc<AppState>, job: &ImportJob) -> Result<PathBuf> {
+async fn prepare_source(state: &Arc<AppState>, job: &ImportJob) -> Result<PreparedSource> {
     match job.source_type.as_str() {
         "local_path" => {
             let path = PathBuf::from(&job.source_value);
             if !path.exists() {
                 anyhow::bail!("local import path does not exist: {}", path.display());
             }
-            Ok(path)
+            Ok(PreparedSource::LocalPath(path))
         }
-        "url" => download_source(state, job).await,
+        "url" => prepare_url_source(state, job).await,
         other => anyhow::bail!("unsupported source type: {other}"),
     }
 }
 
-async fn download_source(state: &Arc<AppState>, job: &ImportJob) -> Result<PathBuf> {
-    tokio::fs::create_dir_all(&state.config.import_dir).await?;
-    let target = state.config.import_dir.join(format!("{}.osm.pbf", job.id));
+async fn prepare_url_source(state: &Arc<AppState>, job: &ImportJob) -> Result<PreparedSource> {
     update_progress(&state.pool, job.id, "downloading source").await?;
-
-    let response = reqwest::get(&job.source_value).await?.error_for_status()?;
-    let mut file = tokio::fs::File::create(&target).await?;
-    let mut stream = response.bytes_stream();
-
-    while let Some(chunk) = stream.next().await {
-        if is_cancel_requested(&state.pool, job.id).await? {
-            anyhow::bail!("import cancelled");
-        }
-        file.write_all(&chunk?).await?;
-    }
-
-    Ok(target)
+    Ok(PreparedSource::Url(job.source_value.clone()))
 }
 
 async fn run_osm2pgsql(
     state: &Arc<AppState>,
     job: &ImportJob,
     staging_prefix: &str,
-    input_path: &Path,
+    source: PreparedSource,
 ) -> Result<()> {
     let mut flex_style = tempfile::Builder::new()
         .prefix("tileme-osm2pgsql-flex-")
         .suffix(".lua")
-        .tempfile_in(&state.config.import_dir)
-        .with_context(|| {
-            format!(
-                "failed to create temporary osm2pgsql flex style in {}",
-                state.config.import_dir.display()
-            )
-        })?;
+        .tempfile()
+        .context("failed to create temporary osm2pgsql flex style")?;
     flex_style
         .write_all(OSM2PGSQL_FLEX_LUA.as_bytes())
         .context("failed to write embedded osm2pgsql flex style")?;
@@ -493,7 +479,8 @@ async fn run_osm2pgsql(
         .flush()
         .context("failed to flush embedded osm2pgsql flex style")?;
 
-    let mut child = Command::new(&state.config.osm2pgsql_bin)
+    let mut command = Command::new(&state.config.osm2pgsql_bin);
+    command
         .env("TILEME_IMPORT_NAME", &job.import_name)
         .env("TILEME_OSM_TABLE_PREFIX", staging_prefix)
         .arg("--create")
@@ -507,8 +494,19 @@ async fn run_osm2pgsql(
         .arg("--cache")
         .arg(state.config.osm2pgsql_cache_mb.to_string())
         .arg("--number-processes")
-        .arg("4")
-        .arg(input_path)
+        .arg("4");
+    match &source {
+        PreparedSource::LocalPath(input_path) => {
+            command.arg(input_path);
+        }
+        PreparedSource::Url(_) => {
+            command.arg("--input-reader").arg("pbf");
+            command.arg("-");
+            command.stdin(Stdio::piped());
+        }
+    }
+
+    let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -516,6 +514,15 @@ async fn run_osm2pgsql(
 
     let stdout = child.stdout.take().context("missing osm2pgsql stdout")?;
     let stderr = child.stderr.take().context("missing osm2pgsql stderr")?;
+    let mut source_writer = match source {
+        PreparedSource::LocalPath(_) => None,
+        PreparedSource::Url(url) => Some(spawn_url_source_writer(
+            state.clone(),
+            job.id,
+            url,
+            child.stdin.take().context("missing osm2pgsql stdin")?,
+        )),
+    };
     let (tx, mut rx) = mpsc::channel::<String>(128);
     spawn_reader(stdout, tx.clone());
     spawn_reader(stderr, tx);
@@ -523,6 +530,12 @@ async fn run_osm2pgsql(
     let mut tail = LogTail::default();
     loop {
         tokio::select! {
+            writer_result = wait_for_source_writer(&mut source_writer), if source_writer.is_some() => {
+                if let Err(err) = writer_result {
+                    let _ = child.kill().await;
+                    return Err(err);
+                }
+            }
             Some(line) = rx.recv() => {
                 tail.push(line);
                 update_log_tail(&state.pool, job.id, tail.as_str()).await?;
@@ -534,16 +547,67 @@ async fn run_osm2pgsql(
                     .await?;
                 if is_cancel_requested(&state.pool, job.id).await? {
                     let _ = child.kill().await;
+                    if let Some(writer) = source_writer.take() {
+                        writer.abort();
+                    }
                     anyhow::bail!("import cancelled");
                 }
                 if let Some(status) = child.try_wait()? {
+                    if let Some(writer) = source_writer.take() {
+                        match writer.await {
+                            Ok(result) => result?,
+                            Err(err) if err.is_cancelled() => {}
+                            Err(err) => return Err(err).context("source streaming task failed"),
+                        }
+                    }
                     if status.success() {
                         return Ok(());
+                    }
+                    if let Some(last_line) = tail.last_non_empty_line() {
+                        anyhow::bail!("osm2pgsql exited with status {status}: {last_line}");
                     }
                     anyhow::bail!("osm2pgsql exited with status {status}");
                 }
             }
         }
+    }
+}
+
+fn spawn_url_source_writer(
+    state: Arc<AppState>,
+    job_id: Uuid,
+    url: String,
+    mut stdin: tokio::process::ChildStdin,
+) -> tokio::task::JoinHandle<Result<()>> {
+    tokio::spawn(async move {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .build()
+            .context("failed to build HTTP client for import source")?;
+        let response = client.get(&url).send().await?.error_for_status()?;
+        let mut stream = response.bytes_stream();
+
+        while let Some(chunk) = stream.next().await {
+            if is_cancel_requested(&state.pool, job_id).await? {
+                anyhow::bail!("import cancelled");
+            }
+            stdin.write_all(&chunk?).await?;
+        }
+
+        stdin.shutdown().await?;
+        Ok(())
+    })
+}
+
+async fn wait_for_source_writer(
+    source_writer: &mut Option<tokio::task::JoinHandle<Result<()>>>,
+) -> Result<()> {
+    let writer = source_writer
+        .take()
+        .context("missing source streaming task")?;
+    match writer.await {
+        Ok(result) => result,
+        Err(err) => Err(err).context("source streaming task failed"),
     }
 }
 
@@ -577,6 +641,14 @@ impl LogTail {
 
     fn as_str(&self) -> String {
         self.lines.join("\n")
+    }
+
+    fn last_non_empty_line(&self) -> Option<&str> {
+        self.lines
+            .iter()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .map(String::as_str)
     }
 }
 

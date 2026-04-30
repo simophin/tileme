@@ -338,18 +338,11 @@ function App() {
   return (
     <main class="shell">
       <section class="mapPane" aria-label="Map">
-        <TileMap />
+        <TileMap
+          isImportPanelOpen={isImportPanelOpen()}
+          openImportPanel={() => setIsImportPanelOpen(true)}
+        />
       </section>
-
-      <button
-        class="importHandle"
-        type="button"
-        aria-controls="import-panel"
-        aria-expanded={isImportPanelOpen()}
-        onClick={() => setIsImportPanelOpen((open) => !open)}
-      >
-        {isImportPanelOpen() ? 'Close imports' : 'Imports'}
-      </button>
 
       <aside
         id="import-panel"
@@ -488,7 +481,12 @@ function App() {
   );
 }
 
-function TileMap() {
+type TileMapProps = {
+  isImportPanelOpen: boolean;
+  openImportPanel: () => void;
+};
+
+function TileMap(props: TileMapProps) {
   let containerRef!: HTMLDivElement;
   let panelRef: HTMLElement | undefined;
   let map: Map | null = null;
@@ -501,6 +499,7 @@ function TileMap() {
   let pendingLongPressTimeout: number | null = null;
   let resizeObserver: ResizeObserver | null = null;
   let layerToggleButton: HTMLButtonElement | null = null;
+  let importToggleButton: HTMLButtonElement | null = null;
   let activeLongPressPointerId: number | null = null;
   let longPressStartX = 0;
   let longPressStartY = 0;
@@ -557,6 +556,7 @@ function TileMap() {
       }),
       'top-left',
     );
+    map.addControl(createImportPanelControl(), 'top-left');
     map.addControl(createLayerPanelControl(), 'top-left');
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
     map.on('styleimagemissing', (event) => {
@@ -615,12 +615,17 @@ function TileMap() {
       searchMarker = null;
       resizeObserver = null;
       layerToggleButton = null;
+      importToggleButton = null;
       map = null;
     });
   });
 
   createEffect(() => {
     layerToggleButton?.setAttribute('aria-expanded', String(isLayerPanelOpen()));
+  });
+
+  createEffect(() => {
+    importToggleButton?.setAttribute('aria-expanded', String(props.isImportPanelOpen));
   });
 
   createEffect(() => {
@@ -786,6 +791,48 @@ function TileMap() {
         controlContainer?.remove();
         if (layerToggleButton === button) {
           layerToggleButton = null;
+        }
+        button = null;
+        controlContainer = null;
+      },
+    };
+  }
+
+  function createImportPanelControl() {
+    let controlContainer: HTMLDivElement | null = null;
+    let button: HTMLButtonElement | null = null;
+
+    function handleClick() {
+      props.openImportPanel();
+    }
+
+    return {
+      onAdd() {
+        controlContainer = document.createElement('div');
+        controlContainer.className = 'maplibregl-ctrl maplibregl-ctrl-group importPanelControl';
+
+        button = document.createElement('button');
+        button.className = 'importPanelToggle';
+        button.type = 'button';
+        button.setAttribute('aria-label', 'Open imports panel');
+        button.setAttribute('aria-controls', 'import-panel');
+        button.setAttribute('aria-expanded', String(props.isImportPanelOpen));
+        button.addEventListener('click', handleClick);
+
+        const icon = document.createElement('span');
+        icon.className = 'maplibregl-ctrl-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        button.append(icon);
+
+        importToggleButton = button;
+        controlContainer.append(button);
+        return controlContainer;
+      },
+      onRemove() {
+        button?.removeEventListener('click', handleClick);
+        controlContainer?.remove();
+        if (importToggleButton === button) {
+          importToggleButton = null;
         }
         button = null;
         controlContainer = null;

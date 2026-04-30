@@ -1,12 +1,9 @@
-use std::path::PathBuf;
-
 use clap::Parser;
 
 #[derive(Clone, Debug)]
 pub struct Config {
     pub database_url: String,
     pub listen_addr: String,
-    pub import_dir: PathBuf,
     pub osm2pgsql_bin: String,
     pub osm2pgsql_cache_mb: u32,
     pub log_json: bool,
@@ -28,9 +25,6 @@ struct Cli {
 
     #[arg(long, env = "TILEME_LISTEN_ADDR", default_value = "127.0.0.1:3000")]
     listen_addr: String,
-
-    #[arg(long, env = "TILEME_IMPORT_DIR", default_value = "/tmp/tileme-imports")]
-    import_dir: PathBuf,
 
     #[arg(long, env = "TILEME_OSM2PGSQL_BIN", default_value = "osm2pgsql")]
     osm2pgsql_bin: String,
@@ -55,7 +49,6 @@ impl From<Cli> for Config {
         Self {
             database_url: cli.database_url,
             listen_addr: cli.listen_addr,
-            import_dir: cli.import_dir,
             osm2pgsql_bin: cli.osm2pgsql_bin,
             osm2pgsql_cache_mb: cli.osm2pgsql_cache_mb,
             log_json: cli.log_json,

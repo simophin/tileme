@@ -79,11 +79,17 @@ button:disabled {
   background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='29' fill='none' stroke='%23333' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8' viewBox='0 0 29 29'%3E%3Cpath d='m14.5 6 8 4.5-8 4.5-8-4.5z'/%3E%3Cpath d='m6.5 14 8 4.5 8-4.5'/%3E%3Cpath d='m6.5 17.5 8 4.5 8-4.5'/%3E%3C/svg%3E");
 }
 
-.maplibregl-ctrl-group button.layerPanelToggle:hover {
+.maplibregl-ctrl button.importPanelToggle .maplibregl-ctrl-icon {
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='29' fill='none' stroke='%23333' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8' viewBox='0 0 29 29'%3E%3Cpath d='M14.5 5.75v11.5'/%3E%3Cpath d='m10.5 13.25 4 4 4-4'/%3E%3Cpath d='M7.5 20.75h14'/%3E%3Crect x='6.5' y='19.75' width='16' height='3.5' rx='1.2'/%3E%3C/svg%3E");
+}
+
+.maplibregl-ctrl-group button.layerPanelToggle:hover,
+.maplibregl-ctrl-group button.importPanelToggle:hover {
   background: #f4f4f4;
 }
 
-.maplibregl-ctrl-group button.layerPanelToggle[aria-expanded="true"] {
+.maplibregl-ctrl-group button.layerPanelToggle[aria-expanded="true"],
+.maplibregl-ctrl-group button.importPanelToggle[aria-expanded="true"] {
   background: #eef6f8;
 }
 
@@ -370,19 +376,6 @@ button:disabled {
 
 .poiTags dd {
   color: #25302b;
-}
-
-.importHandle {
-  position: fixed;
-  top: 18px;
-  right: 18px;
-  z-index: 20;
-  min-height: 40px;
-  border-color: #1f5f75;
-  background: #ffffff;
-  color: #1f5f75;
-  font-weight: 750;
-  box-shadow: 0 8px 22px rgb(0 0 0 / 16%);
 }
 
 .sidePanel {
