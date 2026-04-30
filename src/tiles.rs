@@ -59,7 +59,7 @@ async fn tilejson() -> Json<TileJson> {
             layer("places", 2, MAX_ZOOM),
             layer("pois", 14, MAX_ZOOM),
             layer("transit_stop_labels", 14, MAX_ZOOM),
-            layer("transit_routes", 11, MAX_ZOOM),
+            layer("transit_routes", 9, MAX_ZOOM),
             layer("boundaries", 0, MAX_ZOOM),
         ],
     })
@@ -190,7 +190,8 @@ roads AS (
               $1 >= 14
               OR ($1 >= 13 AND r.class IN ('motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'track', 'path', 'footway', 'steps', 'pedestrian', 'bridleway', 'cycleway'))
               OR ($1 >= 12 AND r.class IN ('motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified'))
-              OR ($1 >= 11 AND r.class IN ('rail', 'light_rail', 'subway', 'tram', 'monorail', 'narrow_gauge'))
+              OR ($1 >= 9 AND r.class IN ('rail', 'light_rail', 'subway', 'monorail', 'narrow_gauge'))
+              OR ($1 >= 11 AND r.class = 'tram')
               OR ($1 >= 10 AND r.class IN ('motorway', 'trunk', 'primary', 'secondary', 'tertiary'))
               OR ($1 >= 8 AND r.class IN ('motorway', 'trunk', 'primary'))
               OR ($1 >= 6 AND r.class IN ('motorway', 'trunk'))
@@ -291,7 +292,7 @@ transit_routes AS (
     FROM (
         SELECT class, name, ref, colour, tags, ST_AsMVTGeom(t.geom, bounds.geom, 4096, 64, true) AS geom
         FROM osm_transit_routes t, bounds
-        WHERE $1 >= 11
+        WHERE $1 >= 9
           AND t.geom && bounds.geom
           AND (
               $1 >= 14

@@ -87,6 +87,125 @@ button:disabled {
   background: #eef6f8;
 }
 
+.searchControl {
+  position: fixed;
+  top: 18px;
+  left: 58px;
+  z-index: 21;
+  width: min(420px, calc(100vw - 148px));
+}
+
+.searchForm {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  border: 1px solid #c9cbc4;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 8px 22px rgb(0 0 0 / 16%);
+}
+
+.searchForm input {
+  min-width: 0;
+  width: 100%;
+  min-height: 40px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 12px;
+  background: transparent;
+  color: #202624;
+}
+
+.searchForm input:focus {
+  outline: 2px solid #2f6f88;
+  outline-offset: 1px;
+}
+
+.searchClearButton {
+  flex: 0 0 auto;
+  min-height: 30px;
+  margin-right: 5px;
+  padding: 0 9px;
+  border: 0;
+  background: #eef0ea;
+  color: #4d5752;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.searchResults {
+  display: grid;
+  gap: 8px;
+  max-height: min(430px, calc(100vh - 78px));
+  margin-top: 8px;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid #d3d5ce;
+  border-radius: 8px;
+  background: #fffef8;
+  box-shadow: 0 10px 24px rgb(0 0 0 / 16%);
+}
+
+.searchStatus {
+  padding: 8px 4px;
+  color: #4c5a54;
+  font-size: 13px;
+}
+
+.searchList {
+  display: grid;
+  gap: 6px;
+}
+
+.searchResult {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 54px;
+  padding: 9px;
+  border: 1px solid #dedfd8;
+  border-radius: 6px;
+  background: #ffffff;
+  text-align: left;
+}
+
+.searchResult:hover {
+  border-color: #9eb7c1;
+  background: #f5fafb;
+}
+
+.searchResult span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.searchResult strong,
+.searchResult small {
+  overflow-wrap: anywhere;
+}
+
+.searchResult strong {
+  color: #202624;
+  font-size: 14px;
+}
+
+.searchResult small {
+  color: #68716c;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.searchResult > small {
+  flex: 0 0 auto;
+  padding-top: 1px;
+}
+
+.searchEmpty {
+  padding: 10px 4px;
+}
+
 .layerControl {
   position: fixed;
   top: 148px;
@@ -528,5 +647,11 @@ h2 {
     top: 148px;
     left: 48px;
     width: min(210px, calc(100vw - 60px));
+  }
+
+  .searchControl {
+    top: 12px;
+    left: 58px;
+    width: min(390px, calc(100vw - 76px));
   }
 }

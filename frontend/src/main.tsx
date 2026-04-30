@@ -74,12 +74,31 @@ type AddressLookupResponse = {
   address: ResolvedAddress | null;
 };
 
+type SearchResult = {
+  layer: string;
+  import_name: string;
+  osm_id: number;
+  source: string | null;
+  class: string | null;
+  name: string;
+  distance_meters: number | null;
+  lat: number;
+  lon: number;
+};
+
+type SearchResponse = {
+  query: string;
+  results: SearchResult[];
+};
+
 const MAX_MAP_ZOOM = 18;
 const MAP_VIEW_STORAGE_KEY = 'tileme.map.view.v1';
 const MAP_LAYER_SETTINGS_STORAGE_KEY = 'tileme.map.layers.v1';
 const IDENTIFY_LONG_PRESS_MS = 550;
 const IDENTIFY_LONG_PRESS_MOVE_TOLERANCE_PX = 10;
 const IDENTIFY_POST_LONG_PRESS_SUPPRESS_MS = 700;
+const SEARCH_DEBOUNCE_MS = 220;
+const SEARCH_MIN_QUERY_CHARS = 2;
 
 type MapLayerKey = 'transit' | 'walking' | 'cycling' | 'amenities';
 
@@ -129,7 +148,15 @@ const OVERLAY_LAYER_GROUPS: Record<MapLayerKey, string[]> = {
     'transit-poi-labels',
   ],
   walking: ['walking-tracks', 'walking-steps', 'walking-track-labels'],
-  cycling: ['cycling-cycleway-casing', 'cycling-cycleways', 'cycling-lane-casing', 'cycling-lanes', 'cycling-lane-labels'],
+  cycling: [
+    'cycling-cycleway-casing',
+    'cycling-cycleways',
+    'cycling-dedicated-lane-casing',
+    'cycling-dedicated-lanes',
+    'cycling-shared-lane-casing',
+    'cycling-shared-lanes',
+    'cycling-lane-labels',
+  ],
   amenities: ['amenity-poi-labels'],
 };
 
@@ -466,8 +493,11 @@ function TileMap() {
   let panelRef: HTMLElement | undefined;
   let map: Map | null = null;
   let identifyMarker: maplibregl.Marker | null = null;
+  let searchMarker: maplibregl.Marker | null = null;
   let identifyAbort: AbortController | null = null;
   let addressLookupAbort: AbortController | null = null;
+  let searchAbort: AbortController | null = null;
+  let searchTimeout: number | null = null;
   let pendingLongPressTimeout: number | null = null;
   let resizeObserver: ResizeObserver | null = null;
   let layerToggleButton: HTMLButtonElement | null = null;
@@ -482,6 +512,11 @@ function TileMap() {
   const [addressResult, setAddressResult] = createSignal<AddressLookupResponse | null>(null);
   const [addressError, setAddressError] = createSignal<string | null>(null);
   const [isLookingUpAddress, setIsLookingUpAddress] = createSignal(false);
+  const [searchQuery, setSearchQuery] = createSignal('');
+  const [searchResults, setSearchResults] = createSignal<SearchResult[]>([]);
+  const [searchError, setSearchError] = createSignal<string | null>(null);
+  const [isSearching, setIsSearching] = createSignal(false);
+  const [isSearchPanelOpen, setIsSearchPanelOpen] = createSignal(false);
   const [layerSettings, setLayerSettings] = createSignal(loadStoredMapLayerSettings());
   const [isLayerPanelOpen, setIsLayerPanelOpen] = createSignal(false);
 
@@ -557,9 +592,12 @@ function TileMap() {
 
     onCleanup(() => {
       cancelPendingLongPress();
+      clearPendingSearch();
       identifyAbort?.abort();
       addressLookupAbort?.abort();
+      searchAbort?.abort();
       identifyMarker?.remove();
+      searchMarker?.remove();
       resizeObserver?.disconnect();
       persistCurrentMapView();
       document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
@@ -572,7 +610,9 @@ function TileMap() {
       map?.remove();
       identifyAbort = null;
       addressLookupAbort = null;
+      searchAbort = null;
       identifyMarker = null;
+      searchMarker = null;
       resizeObserver = null;
       layerToggleButton = null;
       map = null;
@@ -593,6 +633,122 @@ function TileMap() {
 
   function toggleLayerSetting(key: MapLayerKey) {
     setLayerSettings((settings) => ({ ...settings, [key]: !settings[key] }));
+  }
+
+  function handleSearchInput(value: string) {
+    setSearchQuery(value);
+    setIsSearchPanelOpen(true);
+    clearPendingSearch();
+
+    if (value.trim().length < SEARCH_MIN_QUERY_CHARS) {
+      searchAbort?.abort();
+      searchAbort = null;
+      setSearchResults([]);
+      setSearchError(null);
+      setIsSearching(false);
+      return;
+    }
+
+    searchTimeout = window.setTimeout(() => {
+      searchTimeout = null;
+      void runSearch(value);
+    }, SEARCH_DEBOUNCE_MS);
+  }
+
+  function clearPendingSearch() {
+    if (searchTimeout === null) {
+      return;
+    }
+
+    window.clearTimeout(searchTimeout);
+    searchTimeout = null;
+  }
+
+  async function submitSearch(event: SubmitEvent) {
+    event.preventDefault();
+    clearPendingSearch();
+    await runSearch(searchQuery());
+  }
+
+  async function runSearch(rawQuery: string) {
+    if (!map) {
+      return;
+    }
+
+    const trimmed = rawQuery.trim();
+    if (trimmed.length < SEARCH_MIN_QUERY_CHARS) {
+      setSearchResults([]);
+      setSearchError(null);
+      setIsSearching(false);
+      return;
+    }
+
+    searchAbort?.abort();
+    const controller = new AbortController();
+    searchAbort = controller;
+    const center = map.getCenter();
+    const params = new URLSearchParams({
+      q: trimmed,
+      lat: center.lat.toFixed(7),
+      lon: center.lng.toFixed(7),
+      limit: '12',
+    });
+
+    setIsSearching(true);
+    setSearchError(null);
+    setIsSearchPanelOpen(true);
+
+    try {
+      const response = await fetch(`/search?${params}`, { signal: controller.signal });
+      if (!response.ok) {
+        throw new Error(await readApiError(response));
+      }
+      const body = (await response.json()) as SearchResponse;
+      if (searchQuery().trim() === trimmed) {
+        setSearchResults(body.results);
+      }
+    } catch (error) {
+      if (controller.signal.aborted) {
+        return;
+      }
+      setSearchError(error instanceof Error ? error.message : 'Unable to search the map');
+    } finally {
+      if (searchAbort === controller) {
+        setIsSearching(false);
+      }
+    }
+  }
+
+  function selectSearchResult(result: SearchResult) {
+    if (!map) {
+      return;
+    }
+
+    searchMarker?.remove();
+    searchMarker = new maplibregl.Marker({ color: '#7a4d1d' })
+      .setLngLat([result.lon, result.lat])
+      .addTo(map);
+    map.flyTo({
+      center: [result.lon, result.lat],
+      zoom: Math.max(map.getZoom(), result.layer === 'admin_area' ? 11 : 15),
+      essential: true,
+    });
+    setSearchQuery(result.name);
+    setIsSearchPanelOpen(false);
+    clearIdentify();
+  }
+
+  function clearSearch() {
+    clearPendingSearch();
+    searchAbort?.abort();
+    searchAbort = null;
+    searchMarker?.remove();
+    searchMarker = null;
+    setSearchQuery('');
+    setSearchResults([]);
+    setSearchError(null);
+    setIsSearching(false);
+    setIsSearchPanelOpen(false);
   }
 
   function createLayerPanelControl() {
@@ -827,6 +983,54 @@ function TileMap() {
   return (
     <>
       <div ref={containerRef} class="map" />
+      <section class="searchControl" aria-label="Map search">
+        <form class="searchForm" onSubmit={submitSearch}>
+          <input
+            value={searchQuery()}
+            onInput={(event) => handleSearchInput(event.currentTarget.value)}
+            onFocus={() => setIsSearchPanelOpen(searchQuery().trim().length >= SEARCH_MIN_QUERY_CHARS)}
+            placeholder="Search places, POIs, transit"
+            aria-label="Search map"
+          />
+          <Show when={searchQuery().trim().length > 0}>
+            <button type="button" class="searchClearButton" onClick={clearSearch} aria-label="Clear search">
+              Clear
+            </button>
+          </Show>
+        </form>
+        <Show when={isSearchPanelOpen()}>
+          <div class="searchResults" role="listbox" aria-label="Search results">
+            <Show when={isSearching()}>
+              <p class="searchStatus">Searching</p>
+            </Show>
+            <Show when={searchError()}>
+              {(error) => <p class="errorText">{error()}</p>}
+            </Show>
+            <Show
+              when={!searchError() && searchResults().length > 0}
+              fallback={
+                <Show when={!isSearching() && !searchError() && searchQuery().trim().length >= SEARCH_MIN_QUERY_CHARS}>
+                  <p class="emptyState searchEmpty">No results found.</p>
+                </Show>
+              }
+            >
+              <div class="searchList">
+                <For each={searchResults()}>
+                  {(result) => (
+                    <button type="button" class="searchResult" onClick={() => selectSearchResult(result)}>
+                      <span>
+                        <strong>{result.name}</strong>
+                        <small>{searchResultLabel(result)}</small>
+                      </span>
+                      <small>{formatSearchDistance(result.distance_meters)}</small>
+                    </button>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </div>
+        </Show>
+      </section>
       <section
         id="layer-control"
         class="layerControl"
@@ -1122,6 +1326,20 @@ function featureLabel(feature: IdentifiedFeature) {
   return [feature.layer, feature.source, feature.class].filter(Boolean).join(' / ');
 }
 
+function searchResultLabel(result: SearchResult) {
+  return [result.import_name, result.layer, result.source, result.class].filter(Boolean).join(' / ');
+}
+
+function formatSearchDistance(value: number | null) {
+  if (value === null) {
+    return '';
+  }
+  if (value < 1000) {
+    return `${Math.round(value)} m`;
+  }
+  return `${Math.round(value / 1000)} km`;
+}
+
 type PoiTagItem = {
   key: string;
   label: string;
@@ -1216,7 +1434,9 @@ function formatMeters(value: number) {
 }
 
 const WALKING_TRACK_CLASSES = ['track', 'path', 'footway', 'pedestrian', 'bridleway'];
-const CYCLEWAY_VALUES = ['lane', 'opposite_lane', 'track', 'opposite_track', 'shared_lane', 'share_busway', 'shoulder'];
+const DEDICATED_CYCLEWAY_VALUES = ['lane', 'opposite_lane', 'track', 'opposite_track', 'protected_lane', 'buffered_lane'];
+const SHARED_CYCLEWAY_VALUES = ['shared_lane', 'share_busway', 'shoulder'];
+const CYCLEWAY_VALUES = [...DEDICATED_CYCLEWAY_VALUES, ...SHARED_CYCLEWAY_VALUES];
 const CYCLE_LANE_TAG_FILTER: maplibregl.ExpressionSpecification = [
   'all',
   ['!=', ['get', 'class'], 'cycleway'],
@@ -1228,13 +1448,36 @@ const CYCLE_LANE_TAG_FILTER: maplibregl.ExpressionSpecification = [
     ['in', ['get', 'cycleway:both'], ['literal', CYCLEWAY_VALUES]],
   ],
 ];
+const DEDICATED_CYCLE_LANE_FILTER: maplibregl.ExpressionSpecification = [
+  'all',
+  ['!=', ['get', 'class'], 'cycleway'],
+  [
+    'any',
+    ['in', ['get', 'cycleway'], ['literal', DEDICATED_CYCLEWAY_VALUES]],
+    ['in', ['get', 'cycleway:left'], ['literal', DEDICATED_CYCLEWAY_VALUES]],
+    ['in', ['get', 'cycleway:right'], ['literal', DEDICATED_CYCLEWAY_VALUES]],
+    ['in', ['get', 'cycleway:both'], ['literal', DEDICATED_CYCLEWAY_VALUES]],
+  ],
+];
+const SHARED_CYCLE_LANE_FILTER: maplibregl.ExpressionSpecification = [
+  'all',
+  ['!=', ['get', 'class'], 'cycleway'],
+  ['!', DEDICATED_CYCLE_LANE_FILTER],
+  [
+    'any',
+    ['in', ['get', 'cycleway'], ['literal', SHARED_CYCLEWAY_VALUES]],
+    ['in', ['get', 'cycleway:left'], ['literal', SHARED_CYCLEWAY_VALUES]],
+    ['in', ['get', 'cycleway:right'], ['literal', SHARED_CYCLEWAY_VALUES]],
+    ['in', ['get', 'cycleway:both'], ['literal', SHARED_CYCLEWAY_VALUES]],
+  ],
+];
 const CYCLE_LANE_FILTER: maplibregl.ExpressionSpecification = [
   'any',
   ['==', ['get', 'class'], 'cycleway'],
   CYCLE_LANE_TAG_FILTER,
 ];
 const RAILWAY_CLASSES = ['rail', 'light_rail', 'subway', 'tram', 'monorail', 'narrow_gauge'];
-const PHYSICAL_TRANSIT_TRACK_CLASSES = ['light_rail', 'subway', 'tram', 'monorail', 'narrow_gauge'];
+const PHYSICAL_TRANSIT_TRACK_CLASSES = ['rail', 'light_rail', 'subway', 'tram', 'monorail', 'narrow_gauge'];
 const TRAM_LINE_CLASSES = ['tram', 'light_rail'];
 const SOLID_TRANSIT_ROUTE_CLASSES = ['train', 'tram', 'subway', 'light_rail'];
 const RAILWAY_SERVICE_CLASSES = ['siding', 'yard', 'spur', 'crossover'];
@@ -1369,7 +1612,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'line',
     source: 'tileme',
     'source-layer': 'roads',
-    minzoom: 11,
+    minzoom: 9,
     filter: RAILWAY_RENDER_FILTER,
     paint: {
       'line-color': ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], '#75a98b', '#6f93b4'],
@@ -1377,23 +1620,27 @@ const mapLayers: maplibregl.LayerSpecification[] = [
         'interpolate',
         ['linear'],
         ['zoom'],
+        9,
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.4, 1.2],
         11,
-        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.45, 1.2],
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.8, 2],
         14,
-        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 1.05, 2.8],
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 1.5, 3.8],
         17,
-        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 1.6, 4.4],
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 2.2, 5.8],
       ],
       'line-opacity': [
         'interpolate',
         ['linear'],
         ['zoom'],
+        9,
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.26, 0.5],
         11,
-        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.28, 0.52],
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.42, 0.68],
         14,
-        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.45, 0.76],
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.6, 0.86],
         17,
-        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.58, 0.86],
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.72, 0.94],
       ],
     },
   },
@@ -1402,12 +1649,14 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'line',
     source: 'tileme',
     'source-layer': 'roads',
-    minzoom: 11,
+    minzoom: 9,
     filter: RAILWAY_RENDER_FILTER,
     paint: {
       'line-color': [
         'match',
         ['get', 'class'],
+        'rail',
+        '#2f7fbd',
         'tram',
         '#3e9c6f',
         'light_rail',
@@ -1420,23 +1669,27 @@ const mapLayers: maplibregl.LayerSpecification[] = [
         'interpolate',
         ['linear'],
         ['zoom'],
+        9,
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.24, 0.7],
         11,
-        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.28, 0.6],
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.5, 1.1],
         14,
-        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.68, 1.55],
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 1, 2.2],
         17,
-        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 1.05, 2.65],
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 1.5, 3.8],
       ],
       'line-opacity': [
         'interpolate',
         ['linear'],
         ['zoom'],
+        9,
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.38, 0.66],
         11,
-        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.42, 0.66],
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.58, 0.82],
         14,
-        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.64, 0.82],
-        17,
         ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.78, 0.92],
+        17,
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.9, 0.98],
       ],
     },
   },
@@ -1445,7 +1698,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     type: 'line',
     source: 'tileme',
     'source-layer': 'transit_routes',
-    minzoom: 11,
+    minzoom: 9,
     filter: ['in', ['get', 'class'], ['literal', SOLID_TRANSIT_ROUTE_CLASSES]],
     paint: {
       'line-color': [
@@ -1454,17 +1707,19 @@ const mapLayers: maplibregl.LayerSpecification[] = [
         ['get', 'colour'],
         ['match', ['get', 'class'], 'tram', '#3e9c6f', 'light_rail', '#3e9c6f', 'subway', '#6f87b7', '#2f7fbd'],
       ],
-      'line-opacity': ['interpolate', ['linear'], ['zoom'], 11, 0.78, 14, 0.9, 17, 0.96],
+      'line-opacity': ['interpolate', ['linear'], ['zoom'], 9, 0.68, 11, 0.86, 14, 0.94, 17, 0.98],
       'line-width': [
         'interpolate',
         ['linear'],
         ['zoom'],
+        9,
+        ['match', ['get', 'class'], 'tram', 0.55, 'light_rail', 0.55, 0.9],
         11,
-        ['match', ['get', 'class'], 'tram', 0.8, 'light_rail', 0.8, 1.1],
+        ['match', ['get', 'class'], 'tram', 1.2, 'light_rail', 1.2, 1.8],
         14,
-        ['match', ['get', 'class'], 'tram', 1.8, 'light_rail', 1.8, 2.4],
+        ['match', ['get', 'class'], 'tram', 2.6, 'light_rail', 2.6, 3.4],
         17,
-        ['match', ['get', 'class'], 'tram', 3, 'light_rail', 3, 4],
+        ['match', ['get', 'class'], 'tram', 4.2, 'light_rail', 4.2, 5.6],
       ],
     },
   },
@@ -1509,30 +1764,57 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     },
   },
   {
-    id: 'cycling-lane-casing',
+    id: 'cycling-dedicated-lane-casing',
     type: 'line',
     source: 'tileme',
     'source-layer': 'roads',
-    minzoom: 13,
-    filter: CYCLE_LANE_TAG_FILTER,
+    minzoom: 10,
+    filter: DEDICATED_CYCLE_LANE_FILTER,
     paint: {
-      'line-color': '#f4fff7',
-      'line-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0.68, 16, 0.88],
-      'line-width': ['interpolate', ['linear'], ['zoom'], 13, 1, 16, 2.3, 18, 3.1],
+      'line-color': '#effff5',
+      'line-opacity': ['interpolate', ['linear'], ['zoom'], 10, 0.46, 11, 0.62, 13, 0.86, 16, 0.98],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2.2, 11, 3.4, 13, 6, 16, 10, 18, 12],
     },
   },
   {
-    id: 'cycling-lanes',
+    id: 'cycling-dedicated-lanes',
     type: 'line',
     source: 'tileme',
     'source-layer': 'roads',
-    minzoom: 13,
-    filter: CYCLE_LANE_TAG_FILTER,
+    minzoom: 10,
+    filter: DEDICATED_CYCLE_LANE_FILTER,
     paint: {
-      'line-color': '#42b883',
-      'line-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0.72, 16, 0.94],
-      'line-width': ['interpolate', ['linear'], ['zoom'], 13, 0.55, 16, 1.35, 18, 1.9],
-      'line-dasharray': [1.4, 0.8],
+      'line-color': '#169b6b',
+      'line-opacity': ['interpolate', ['linear'], ['zoom'], 10, 0.58, 11, 0.74, 13, 0.94, 16, 1],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1.4, 11, 2.2, 13, 4.2, 16, 7.2, 18, 9],
+    },
+  },
+  {
+    id: 'cycling-shared-lane-casing',
+    type: 'line',
+    source: 'tileme',
+    'source-layer': 'roads',
+    minzoom: 10,
+    filter: SHARED_CYCLE_LANE_FILTER,
+    paint: {
+      'line-color': '#effff5',
+      'line-opacity': ['interpolate', ['linear'], ['zoom'], 10, 0.42, 11, 0.58, 13, 0.84, 16, 0.96],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2.2, 11, 3.4, 13, 6, 16, 10, 18, 12],
+      'line-dasharray': [1.6, 0.7],
+    },
+  },
+  {
+    id: 'cycling-shared-lanes',
+    type: 'line',
+    source: 'tileme',
+    'source-layer': 'roads',
+    minzoom: 10,
+    filter: SHARED_CYCLE_LANE_FILTER,
+    paint: {
+      'line-color': '#169b6b',
+      'line-opacity': ['interpolate', ['linear'], ['zoom'], 10, 0.54, 11, 0.7, 13, 0.92, 16, 0.98],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1.4, 11, 2.2, 13, 4.2, 16, 7.2, 18, 9],
+      'line-dasharray': [1.6, 0.7],
     },
   },
   {

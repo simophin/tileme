@@ -47,6 +47,7 @@ async fn asset(uri: Uri) -> Response<Body> {
     if path.starts_with("imports")
         || path.starts_with("address_lookup")
         || path.starts_with("identify")
+        || path.starts_with("search")
         || path.starts_with("tiles")
         || matches!(path, "healthz" | "readyz" | "metrics" | "tiles.json")
     {
