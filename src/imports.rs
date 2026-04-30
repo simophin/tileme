@@ -25,7 +25,8 @@ use crate::error::AppError;
 const IMPORT_JOB_CHANNEL: &str = "tileme_import_jobs";
 const JOB_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 const JOB_COLUMNS: &str = "id, import_name, source_type::text AS source_type, source_value, mode::text AS mode, state::text AS state, progress_message, log_tail, error_message, cancel_requested, started_at, finished_at, heartbeat_at, created_at, updated_at";
-const OSM2PGSQL_FLEX_LUA: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/osm2pgsql/flex.lua"));
+const OSM2PGSQL_FLEX_LUA: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/osm2pgsql/flex.lua"));
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
@@ -33,6 +34,7 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route("/import-names", get(list_import_names))
         .route("/imports/{id}", get(get_import))
         .route("/imports/{id}/cancel", post(cancel_import))
+        .route("/imports/{id}/rerun", post(rerun_import))
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,24 +110,16 @@ async fn create_import(
         ImportSource::Url { url } => ("url", url),
     };
 
-    let row = sqlx::query(
-        "WITH created AS (
-            INSERT INTO import_jobs (import_name, source_type, source_value, mode)
-            VALUES ($1, $2::import_source_type, $3, $4::import_mode)
-            RETURNING id, import_name, source_type::text AS source_type, source_value, mode::text AS mode, state::text AS state, progress_message, log_tail, error_message, cancel_requested, started_at, finished_at, heartbeat_at, created_at, updated_at
-         ), notified AS (
-            SELECT pg_notify('tileme_import_jobs', id::text) FROM created
-         )
-         SELECT created.* FROM created, notified",
+    let job = insert_import_job(
+        &state.pool,
+        &import_name,
+        source_type,
+        &source_value,
+        &request.mode,
     )
-    .bind(import_name)
-    .bind(source_type)
-    .bind(source_value)
-    .bind(request.mode)
-    .fetch_one(&state.pool)
     .await?;
 
-    Ok(Json(row_to_job(row)?))
+    Ok(Json(job))
 }
 
 async fn list_import_names(
@@ -201,6 +195,65 @@ async fn cancel_import(
     .fetch_one(&state.pool)
     .await?;
     Ok(Json(row_to_job(row)?))
+}
+
+async fn rerun_import(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<Uuid>,
+) -> Result<Json<ImportJob>, AppError> {
+    let original = get_import_job(&state.pool, id).await?;
+    if original.state == "queued" || original.state == "running" {
+        return Err(AppError::BadRequest(
+            "only completed import jobs can be re-run".into(),
+        ));
+    }
+
+    let job = insert_import_job(
+        &state.pool,
+        &original.import_name,
+        &original.source_type,
+        &original.source_value,
+        &original.mode,
+    )
+    .await?;
+    Ok(Json(job))
+}
+
+async fn insert_import_job(
+    pool: &PgPool,
+    import_name: &str,
+    source_type: &str,
+    source_value: &str,
+    mode: &str,
+) -> Result<ImportJob> {
+    let row = sqlx::query(
+        "WITH created AS (
+            INSERT INTO import_jobs (import_name, source_type, source_value, mode)
+            VALUES ($1, $2::import_source_type, $3, $4::import_mode)
+            RETURNING id, import_name, source_type::text AS source_type, source_value, mode::text AS mode, state::text AS state, progress_message, log_tail, error_message, cancel_requested, started_at, finished_at, heartbeat_at, created_at, updated_at
+         ), notified AS (
+            SELECT pg_notify('tileme_import_jobs', id::text) FROM created
+         )
+         SELECT created.* FROM created, notified",
+    )
+    .bind(import_name)
+    .bind(source_type)
+    .bind(source_value)
+    .bind(mode)
+    .fetch_one(pool)
+    .await?;
+
+    row_to_job(row)
+}
+
+async fn get_import_job(pool: &PgPool, id: Uuid) -> Result<ImportJob> {
+    let row = sqlx::query(&format!(
+        "SELECT {JOB_COLUMNS} FROM import_jobs WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
+    row_to_job(row)
 }
 
 pub async fn worker_loop(state: Arc<AppState>) {

@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import { render } from 'solid-js/web';
 import maplibregl, { Map } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -76,9 +76,14 @@ type AddressLookupResponse = {
 
 const MAX_MAP_ZOOM = 18;
 const MAP_VIEW_STORAGE_KEY = 'tileme.map.view.v1';
+const MAP_LAYER_SETTINGS_STORAGE_KEY = 'tileme.map.layers.v1';
 const IDENTIFY_LONG_PRESS_MS = 550;
 const IDENTIFY_LONG_PRESS_MOVE_TOLERANCE_PX = 10;
 const IDENTIFY_POST_LONG_PRESS_SUPPRESS_MS = 700;
+
+type MapLayerKey = 'transit' | 'walking' | 'amenities';
+
+type MapLayerSettings = Record<MapLayerKey, boolean>;
 
 type StoredMapView = {
   lng: number;
@@ -96,6 +101,24 @@ const DEFAULT_MAP_VIEW: StoredMapView = {
   pitch: 0,
 };
 
+const DEFAULT_MAP_LAYER_SETTINGS: MapLayerSettings = {
+  transit: true,
+  walking: true,
+  amenities: true,
+};
+
+const MAP_LAYER_OPTIONS: Array<{ key: MapLayerKey; label: string }> = [
+  { key: 'transit', label: 'Transit' },
+  { key: 'walking', label: 'Walking & Trails' },
+  { key: 'amenities', label: 'Amenities' },
+];
+
+const OVERLAY_LAYER_GROUPS: Record<MapLayerKey, string[]> = {
+  transit: ['railway-casing', 'railway-lines', 'railway-labels', 'transit-poi-labels'],
+  walking: ['walking-tracks', 'walking-steps', 'walking-track-labels'],
+  amenities: ['amenity-poi-labels'],
+};
+
 function App() {
   const [jobs, setJobs] = createSignal<ImportJob[]>([]);
   const [importNames, setImportNames] = createSignal<ImportName[]>([]);
@@ -107,6 +130,7 @@ function App() {
   const [sourceKind, setSourceKind] = createSignal<'local_path' | 'url'>('local_path');
   const [sourceValue, setSourceValue] = createSignal('');
   const [isSubmitting, setIsSubmitting] = createSignal(false);
+  const [rerunningJobId, setRerunningJobId] = createSignal<string | null>(null);
   const [isImportPanelOpen, setIsImportPanelOpen] = createSignal(false);
 
   const activeJob = createMemo(
@@ -196,6 +220,22 @@ function App() {
       await loadJobs();
     } catch (error) {
       setJobsError(error instanceof Error ? error.message : 'Unable to cancel import');
+    }
+  }
+
+  async function rerunJob(id: string) {
+    setRerunningJobId(id);
+    try {
+      const response = await fetch(`/imports/${id}/rerun`, { method: 'POST' });
+      if (!response.ok) {
+        throw new Error(await readApiError(response));
+      }
+      await loadJobs();
+      await loadImportNames();
+    } catch (error) {
+      setJobsError(error instanceof Error ? error.message : 'Unable to re-run import');
+    } finally {
+      setRerunningJobId(null);
     }
   }
 
@@ -335,7 +375,16 @@ function App() {
             when={jobs().length > 0}
             fallback={<p class="emptyState">No imports yet.</p>}
           >
-            <For each={jobs()}>{(job) => <JobRow job={job} onCancel={cancelJob} />}</For>
+            <For each={jobs()}>
+              {(job) => (
+                <JobRow
+                  job={job}
+                  onCancel={cancelJob}
+                  onRerun={rerunJob}
+                  isRerunning={rerunningJobId() === job.id}
+                />
+              )}
+            </For>
           </Show>
         </div>
       </aside>
@@ -352,6 +401,7 @@ function TileMap() {
   let addressLookupAbort: AbortController | null = null;
   let pendingLongPressTimeout: number | null = null;
   let resizeObserver: ResizeObserver | null = null;
+  let layerToggleButton: HTMLButtonElement | null = null;
   let activeLongPressPointerId: number | null = null;
   let longPressStartX = 0;
   let longPressStartY = 0;
@@ -363,6 +413,8 @@ function TileMap() {
   const [addressResult, setAddressResult] = createSignal<AddressLookupResponse | null>(null);
   const [addressError, setAddressError] = createSignal<string | null>(null);
   const [isLookingUpAddress, setIsLookingUpAddress] = createSignal(false);
+  const [layerSettings, setLayerSettings] = createSignal(loadStoredMapLayerSettings());
+  const [isLayerPanelOpen, setIsLayerPanelOpen] = createSignal(false);
 
   onMount(() => {
     const vectorTileUrlTemplate = `${window.location.origin}/tiles/{z}/{x}/{y}.pbf`;
@@ -401,7 +453,13 @@ function TileMap() {
       }),
       'top-left',
     );
+    map.addControl(createLayerPanelControl(), 'top-left');
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+    map.on('load', () => {
+      if (map) {
+        applyMapLayerSettings(map, layerSettings());
+      }
+    });
     map.on('click', handleMapClick);
     map.on('contextmenu', handleMapContextMenu);
     map.on('dragstart', cancelPendingLongPress);
@@ -441,9 +499,68 @@ function TileMap() {
       addressLookupAbort = null;
       identifyMarker = null;
       resizeObserver = null;
+      layerToggleButton = null;
       map = null;
     });
   });
+
+  createEffect(() => {
+    layerToggleButton?.setAttribute('aria-expanded', String(isLayerPanelOpen()));
+  });
+
+  createEffect(() => {
+    const settings = layerSettings();
+    saveStoredMapLayerSettings(settings);
+    if (map?.isStyleLoaded()) {
+      applyMapLayerSettings(map, settings);
+    }
+  });
+
+  function toggleLayerSetting(key: MapLayerKey) {
+    setLayerSettings((settings) => ({ ...settings, [key]: !settings[key] }));
+  }
+
+  function createLayerPanelControl() {
+    let controlContainer: HTMLDivElement | null = null;
+    let button: HTMLButtonElement | null = null;
+
+    function handleClick() {
+      setIsLayerPanelOpen((open) => !open);
+    }
+
+    return {
+      onAdd() {
+        controlContainer = document.createElement('div');
+        controlContainer.className = 'maplibregl-ctrl maplibregl-ctrl-group layerPanelControl';
+
+        button = document.createElement('button');
+        button.className = 'layerPanelToggle';
+        button.type = 'button';
+        button.setAttribute('aria-label', 'Toggle map layers');
+        button.setAttribute('aria-controls', 'layer-control');
+        button.setAttribute('aria-expanded', String(isLayerPanelOpen()));
+        button.addEventListener('click', handleClick);
+
+        const icon = document.createElement('span');
+        icon.className = 'maplibregl-ctrl-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        button.append(icon);
+
+        layerToggleButton = button;
+        controlContainer.append(button);
+        return controlContainer;
+      },
+      onRemove() {
+        button?.removeEventListener('click', handleClick);
+        controlContainer?.remove();
+        if (layerToggleButton === button) {
+          layerToggleButton = null;
+        }
+        button = null;
+        controlContainer = null;
+      },
+    };
+  }
 
   function handleMapClick() {
     if (performance.now() < suppressMapClickUntil) {
@@ -635,6 +752,28 @@ function TileMap() {
   return (
     <>
       <div ref={containerRef} class="map" />
+      <section
+        id="layer-control"
+        class="layerControl"
+        classList={{ open: isLayerPanelOpen() }}
+        aria-label="Map layers"
+      >
+        <h2>Layers</h2>
+        <div class="layerToggleList">
+          <For each={MAP_LAYER_OPTIONS}>
+            {(option) => (
+              <label class="layerToggle">
+                <input
+                  type="checkbox"
+                  checked={layerSettings()[option.key]}
+                  onChange={() => toggleLayerSetting(option.key)}
+                />
+                <span>{option.label}</span>
+              </label>
+            )}
+          </For>
+        </div>
+      </section>
       <Show when={mapError()}>{(error) => <div class="mapError">{error()}</div>}</Show>
       <Show when={identifyResult()}>
         {(result) => (
@@ -752,6 +891,43 @@ function saveStoredMapView(view: StoredMapView) {
     window.localStorage.setItem(MAP_VIEW_STORAGE_KEY, JSON.stringify(view));
   } catch {
     // Browsers can reject localStorage writes in private mode or when storage is full.
+  }
+}
+
+function loadStoredMapLayerSettings(): MapLayerSettings {
+  try {
+    const rawValue = window.localStorage.getItem(MAP_LAYER_SETTINGS_STORAGE_KEY);
+    if (!rawValue) {
+      return DEFAULT_MAP_LAYER_SETTINGS;
+    }
+
+    const storedSettings = JSON.parse(rawValue) as Partial<MapLayerSettings>;
+    return {
+      transit: typeof storedSettings.transit === 'boolean' ? storedSettings.transit : true,
+      walking: typeof storedSettings.walking === 'boolean' ? storedSettings.walking : true,
+      amenities: typeof storedSettings.amenities === 'boolean' ? storedSettings.amenities : true,
+    };
+  } catch {
+    return DEFAULT_MAP_LAYER_SETTINGS;
+  }
+}
+
+function saveStoredMapLayerSettings(settings: MapLayerSettings) {
+  try {
+    window.localStorage.setItem(MAP_LAYER_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+  } catch {
+    // Browsers can reject localStorage writes in private mode or when storage is full.
+  }
+}
+
+function applyMapLayerSettings(map: Map, settings: MapLayerSettings) {
+  for (const option of MAP_LAYER_OPTIONS) {
+    const visibility = settings[option.key] ? 'visible' : 'none';
+    for (const layerId of OVERLAY_LAYER_GROUPS[option.key]) {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, 'visibility', visibility);
+      }
+    }
   }
 }
 
@@ -1208,11 +1384,34 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     },
   },
   {
-    id: 'poi-labels',
+    id: 'transit-poi-labels',
+    type: 'symbol',
+    source: 'tileme',
+    'source-layer': 'pois',
+    minzoom: 14,
+    filter: ['==', ['get', 'source'], 'public_transport'],
+    layout: {
+      'text-field': ['get', 'name'],
+      'text-font': ['Noto Sans Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 14, 9, 18, 11],
+      'text-anchor': 'top',
+      'text-offset': [0, 0.6],
+      'text-allow-overlap': false,
+      'symbol-sort-key': 1,
+    },
+    paint: {
+      'text-color': '#275e78',
+      'text-halo-color': '#fffdf5',
+      'text-halo-width': 1.1,
+    },
+  },
+  {
+    id: 'amenity-poi-labels',
     type: 'symbol',
     source: 'tileme',
     'source-layer': 'pois',
     minzoom: 15,
+    filter: ['==', ['get', 'source'], 'amenity'],
     layout: {
       'text-field': ['get', 'name'],
       'text-font': ['Noto Sans Regular'],
@@ -1220,7 +1419,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
       'text-anchor': 'top',
       'text-offset': [0, 0.6],
       'text-allow-overlap': false,
-      'symbol-sort-key': ['match', ['get', 'source'], 'public_transport', 1, 'tourism', 2, 'amenity', 3, 'leisure', 4, 'shop', 5, 6],
+      'symbol-sort-key': 2,
     },
     paint: {
       'text-color': '#4f463b',
@@ -1248,8 +1447,14 @@ const mapLayers: maplibregl.LayerSpecification[] = [
   },
 ];
 
-function JobRow(props: { job: ImportJob; onCancel: (id: string) => Promise<void> }) {
+function JobRow(props: {
+  job: ImportJob;
+  onCancel: (id: string) => Promise<void>;
+  onRerun: (id: string) => Promise<void>;
+  isRerunning: boolean;
+}) {
   const canCancel = createMemo(() => props.job.state === 'queued' || props.job.state === 'running');
+  const canRerun = createMemo(() => !canCancel());
   const message = createMemo(() => props.job.error_message ?? props.job.progress_message ?? props.job.log_tail);
 
   return (
@@ -1267,6 +1472,15 @@ function JobRow(props: { job: ImportJob; onCancel: (id: string) => Promise<void>
       </Show>
       <div class="jobActions">
         <span>{props.job.source_type === 'url' ? 'URL' : 'Path'}</span>
+        <Show when={canRerun()}>
+          <button
+            type="button"
+            onClick={() => void props.onRerun(props.job.id)}
+            disabled={props.isRerunning}
+          >
+            {props.isRerunning ? 'Re-running' : 'Re-run'}
+          </button>
+        </Show>
         <Show when={canCancel()}>
           <button
             type="button"

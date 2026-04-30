@@ -49,6 +49,7 @@ POST /imports
 GET  /imports
 GET  /imports/{job_id}
 POST /imports/{job_id}/cancel
+POST /imports/{job_id}/rerun
 ```
 
 ## Frontend

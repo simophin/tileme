@@ -75,6 +75,64 @@ button:disabled {
   box-shadow: 0 10px 24px rgb(0 0 0 / 18%);
 }
 
+.maplibregl-ctrl button.layerPanelToggle .maplibregl-ctrl-icon {
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='29' fill='none' stroke='%23333' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8' viewBox='0 0 29 29'%3E%3Cpath d='m14.5 6 8 4.5-8 4.5-8-4.5z'/%3E%3Cpath d='m6.5 14 8 4.5 8-4.5'/%3E%3Cpath d='m6.5 17.5 8 4.5 8-4.5'/%3E%3C/svg%3E");
+}
+
+.maplibregl-ctrl-group button.layerPanelToggle:hover {
+  background: #f4f4f4;
+}
+
+.maplibregl-ctrl-group button.layerPanelToggle[aria-expanded="true"] {
+  background: #eef6f8;
+}
+
+.layerControl {
+  position: fixed;
+  top: 148px;
+  left: 48px;
+  z-index: 19;
+  display: none;
+  gap: 9px;
+  width: min(210px, calc(100vw - 72px));
+  padding: 11px;
+  border: 1px solid #d3d5ce;
+  border-radius: 8px;
+  background: #fffef8;
+  box-shadow: 0 10px 24px rgb(0 0 0 / 16%);
+}
+
+.layerControl.open {
+  display: grid;
+}
+
+.layerToggleList {
+  display: grid;
+  gap: 7px;
+}
+
+.layerToggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 28px;
+  color: #25302b;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.layerToggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #2f6f88;
+}
+
+.layerToggle span {
+  overflow-wrap: anywhere;
+}
+
 .identifyPanel {
   position: fixed;
   left: 16px;
@@ -439,6 +497,10 @@ h2 {
   padding: 0 10px;
 }
 
+.jobActions span {
+  margin-right: auto;
+}
+
 @media (max-width: 900px) {
   .shell {
     min-height: 100vh;
@@ -460,5 +522,11 @@ h2 {
 
   .identifyPanel {
     bottom: 12px;
+  }
+
+  .layerControl {
+    top: 148px;
+    left: 48px;
+    width: min(210px, calc(100vw - 60px));
   }
 }
