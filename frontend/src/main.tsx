@@ -81,7 +81,7 @@ const IDENTIFY_LONG_PRESS_MS = 550;
 const IDENTIFY_LONG_PRESS_MOVE_TOLERANCE_PX = 10;
 const IDENTIFY_POST_LONG_PRESS_SUPPRESS_MS = 700;
 
-type MapLayerKey = 'transit' | 'walking' | 'amenities';
+type MapLayerKey = 'transit' | 'walking' | 'cycling' | 'amenities';
 
 type MapLayerSettings = Record<MapLayerKey, boolean>;
 
@@ -104,20 +104,89 @@ const DEFAULT_MAP_VIEW: StoredMapView = {
 const DEFAULT_MAP_LAYER_SETTINGS: MapLayerSettings = {
   transit: true,
   walking: true,
+  cycling: true,
   amenities: true,
 };
 
 const MAP_LAYER_OPTIONS: Array<{ key: MapLayerKey; label: string }> = [
   { key: 'transit', label: 'Transit' },
   { key: 'walking', label: 'Walking & Trails' },
+  { key: 'cycling', label: 'Cycling' },
   { key: 'amenities', label: 'Amenities' },
 ];
 
 const OVERLAY_LAYER_GROUPS: Record<MapLayerKey, string[]> = {
-  transit: ['railway-casing', 'railway-lines', 'railway-labels', 'transit-poi-labels'],
+  transit: [
+    'railway-casing',
+    'railway-lines',
+    'transit-route-lines',
+    'transit-ferry-route-lines',
+    'railway-labels',
+    'transit-stop-markers',
+    'transit-stop-labels',
+    'transit-platform-labels',
+    'bus-stop-labels',
+    'transit-poi-labels',
+  ],
   walking: ['walking-tracks', 'walking-steps', 'walking-track-labels'],
+  cycling: ['cycling-cycleway-casing', 'cycling-cycleways', 'cycling-lane-casing', 'cycling-lanes', 'cycling-lane-labels'],
   amenities: ['amenity-poi-labels'],
 };
+
+const TRAIN_STOP_CLASSES = ['halt', 'station'];
+const TRAM_STOP_CLASSES = ['tram_stop'];
+const RAIL_TRANSIT_STOP_CLASSES = [...TRAIN_STOP_CLASSES, ...TRAM_STOP_CLASSES];
+const TRAIN_PLATFORM_CLASSES = ['platform'];
+const TRAIN_STOP_ICON = 'tileme-train-stop';
+const TRAM_STOP_ICON = 'tileme-tram-stop';
+const BUS_STOP_CLASSES = ['bus_stop', 'bus_station'];
+const BUS_STOP_ICON = 'tileme-bus-stop';
+const RAIL_TRANSIT_PLATFORM_FILTER: maplibregl.ExpressionSpecification = [
+  'all',
+  ['==', ['get', 'source'], 'public_transport'],
+  [
+    'any',
+    ['in', ['get', 'railway'], ['literal', TRAIN_PLATFORM_CLASSES]],
+    [
+      'all',
+      ['in', ['get', 'class'], ['literal', TRAIN_PLATFORM_CLASSES]],
+      ['==', ['get', 'train'], 'yes'],
+    ],
+    [
+      'all',
+      ['in', ['get', 'public_transport'], ['literal', TRAIN_PLATFORM_CLASSES]],
+      ['==', ['get', 'train'], 'yes'],
+    ],
+  ],
+];
+const RAIL_TRANSIT_STOP_FILTER: maplibregl.ExpressionSpecification = [
+  'all',
+  ['==', ['get', 'source'], 'public_transport'],
+  ['!', RAIL_TRANSIT_PLATFORM_FILTER],
+  [
+    'any',
+    ['in', ['get', 'class'], ['literal', RAIL_TRANSIT_STOP_CLASSES]],
+    ['in', ['get', 'railway'], ['literal', RAIL_TRANSIT_STOP_CLASSES]],
+    ['==', ['get', 'train'], 'yes'],
+    ['==', ['get', 'tram'], 'yes'],
+  ],
+];
+const TRAM_TRANSIT_STOP_FILTER: maplibregl.ExpressionSpecification = [
+  'any',
+  ['in', ['get', 'class'], ['literal', TRAM_STOP_CLASSES]],
+  ['in', ['get', 'railway'], ['literal', TRAM_STOP_CLASSES]],
+  ['==', ['get', 'tram'], 'yes'],
+];
+const BUS_TRANSIT_STOP_FILTER: maplibregl.ExpressionSpecification = [
+  'all',
+  ['==', ['get', 'source'], 'public_transport'],
+  [
+    'any',
+    ['in', ['get', 'class'], ['literal', BUS_STOP_CLASSES]],
+    ['==', ['get', 'highway'], 'bus_stop'],
+    ['==', ['get', 'bus'], 'yes'],
+  ],
+];
 
 function App() {
   const [jobs, setJobs] = createSignal<ImportJob[]>([]);
@@ -455,8 +524,14 @@ function TileMap() {
     );
     map.addControl(createLayerPanelControl(), 'top-left');
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+    map.on('styleimagemissing', (event) => {
+      if (event.id === TRAIN_STOP_ICON || event.id === TRAM_STOP_ICON || event.id === BUS_STOP_ICON) {
+        addTransitStopIcons(map!);
+      }
+    });
     map.on('load', () => {
       if (map) {
+        addTransitStopIcons(map);
         applyMapLayerSettings(map, layerSettings());
       }
     });
@@ -905,6 +980,7 @@ function loadStoredMapLayerSettings(): MapLayerSettings {
     return {
       transit: typeof storedSettings.transit === 'boolean' ? storedSettings.transit : true,
       walking: typeof storedSettings.walking === 'boolean' ? storedSettings.walking : true,
+      cycling: typeof storedSettings.cycling === 'boolean' ? storedSettings.cycling : true,
       amenities: typeof storedSettings.amenities === 'boolean' ? storedSettings.amenities : true,
     };
   } catch {
@@ -929,6 +1005,91 @@ function applyMapLayerSettings(map: Map, settings: MapLayerSettings) {
       }
     }
   }
+}
+
+function addTransitStopIcons(map: Map) {
+  if (!map.hasImage(TRAIN_STOP_ICON)) {
+    map.addImage(TRAIN_STOP_ICON, createTransitStopIcon('#1d6f98', 'train'), { pixelRatio: 2 });
+  }
+  if (!map.hasImage(TRAM_STOP_ICON)) {
+    map.addImage(TRAM_STOP_ICON, createTransitStopIcon('#217f7f', 'tram'), { pixelRatio: 2 });
+  }
+  if (!map.hasImage(BUS_STOP_ICON)) {
+    map.addImage(BUS_STOP_ICON, createTransitStopIcon('#5d7d2f', 'bus'), { pixelRatio: 2 });
+  }
+}
+
+function createTransitStopIcon(color: string, mode: 'train' | 'tram' | 'bus'): ImageData {
+  const size = 48;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('Unable to create transit stop icon');
+  }
+
+  context.clearRect(0, 0, size, size);
+  context.fillStyle = color;
+  context.beginPath();
+  context.arc(24, 24, 20, 0, Math.PI * 2);
+  context.fill();
+
+  context.strokeStyle = '#ffffff';
+  context.lineCap = 'round';
+  context.lineJoin = 'round';
+
+  if (mode === 'bus') {
+    context.lineWidth = 4;
+    context.beginPath();
+    context.roundRect(15, 14, 18, 20, 4);
+    context.stroke();
+
+    context.lineWidth = 3;
+    context.beginPath();
+    context.moveTo(18, 22);
+    context.lineTo(30, 22);
+    context.moveTo(19, 33);
+    context.lineTo(19, 36);
+    context.moveTo(29, 33);
+    context.lineTo(29, 36);
+    context.stroke();
+  } else if (mode === 'tram') {
+    context.lineWidth = 4;
+    context.beginPath();
+    context.moveTo(16, 16);
+    context.lineTo(24, 12);
+    context.lineTo(32, 16);
+    context.stroke();
+
+    context.lineWidth = 5;
+    context.beginPath();
+    context.moveTo(16, 23);
+    context.lineTo(32, 23);
+    context.moveTo(18, 31);
+    context.lineTo(30, 31);
+    context.stroke();
+  } else {
+    context.lineWidth = 5;
+    context.beginPath();
+    context.moveTo(17, 14);
+    context.lineTo(31, 14);
+    context.moveTo(17, 24);
+    context.lineTo(31, 24);
+    context.moveTo(18, 33);
+    context.lineTo(30, 33);
+    context.stroke();
+  }
+
+  context.lineWidth = 3;
+  context.beginPath();
+  context.moveTo(18, 36);
+  context.lineTo(14, 40);
+  context.moveTo(30, 36);
+  context.lineTo(34, 40);
+  context.stroke();
+
+  return context.getImageData(0, 0, size, size);
 }
 
 function isValidStoredMapView(view: Partial<StoredMapView>): view is StoredMapView {
@@ -1054,8 +1215,36 @@ function formatMeters(value: number) {
   return `${Math.round(value)} m`;
 }
 
-const WALKING_TRACK_CLASSES = ['track', 'path', 'footway', 'pedestrian', 'bridleway', 'cycleway'];
+const WALKING_TRACK_CLASSES = ['track', 'path', 'footway', 'pedestrian', 'bridleway'];
+const CYCLEWAY_VALUES = ['lane', 'opposite_lane', 'track', 'opposite_track', 'shared_lane', 'share_busway', 'shoulder'];
+const CYCLE_LANE_TAG_FILTER: maplibregl.ExpressionSpecification = [
+  'all',
+  ['!=', ['get', 'class'], 'cycleway'],
+  [
+    'any',
+    ['in', ['get', 'cycleway'], ['literal', CYCLEWAY_VALUES]],
+    ['in', ['get', 'cycleway:left'], ['literal', CYCLEWAY_VALUES]],
+    ['in', ['get', 'cycleway:right'], ['literal', CYCLEWAY_VALUES]],
+    ['in', ['get', 'cycleway:both'], ['literal', CYCLEWAY_VALUES]],
+  ],
+];
+const CYCLE_LANE_FILTER: maplibregl.ExpressionSpecification = [
+  'any',
+  ['==', ['get', 'class'], 'cycleway'],
+  CYCLE_LANE_TAG_FILTER,
+];
 const RAILWAY_CLASSES = ['rail', 'light_rail', 'subway', 'tram', 'monorail', 'narrow_gauge'];
+const PHYSICAL_TRANSIT_TRACK_CLASSES = ['light_rail', 'subway', 'tram', 'monorail', 'narrow_gauge'];
+const TRAM_LINE_CLASSES = ['tram', 'light_rail'];
+const SOLID_TRANSIT_ROUTE_CLASSES = ['train', 'tram', 'subway', 'light_rail'];
+const RAILWAY_SERVICE_CLASSES = ['siding', 'yard', 'spur', 'crossover'];
+const RAILWAY_FREIGHT_USAGE_CLASSES = ['industrial', 'military'];
+const RAILWAY_RENDER_FILTER: maplibregl.ExpressionSpecification = [
+  'all',
+  ['in', ['get', 'class'], ['literal', PHYSICAL_TRANSIT_TRACK_CLASSES]],
+  ['!', ['in', ['get', 'service'], ['literal', RAILWAY_SERVICE_CLASSES]]],
+  ['!', ['in', ['get', 'usage'], ['literal', RAILWAY_FREIGHT_USAGE_CLASSES]]],
+];
 const ROAD_CLASSES = [
   'motorway',
   'trunk',
@@ -1181,11 +1370,31 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     source: 'tileme',
     'source-layer': 'roads',
     minzoom: 11,
-    filter: ['in', ['get', 'class'], ['literal', RAILWAY_CLASSES]],
+    filter: RAILWAY_RENDER_FILTER,
     paint: {
-      'line-color': '#6f6b68',
-      'line-opacity': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 14, 0.78, 17, 0.9],
-      'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.9, 14, 2.1, 17, 3.4],
+      'line-color': ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], '#75a98b', '#6f93b4'],
+      'line-width': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        11,
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.45, 1.2],
+        14,
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 1.05, 2.8],
+        17,
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 1.6, 4.4],
+      ],
+      'line-opacity': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        11,
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.28, 0.52],
+        14,
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.45, 0.76],
+        17,
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.58, 0.86],
+      ],
     },
   },
   {
@@ -1194,11 +1403,136 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     source: 'tileme',
     'source-layer': 'roads',
     minzoom: 11,
-    filter: ['in', ['get', 'class'], ['literal', RAILWAY_CLASSES]],
+    filter: RAILWAY_RENDER_FILTER,
     paint: {
-      'line-color': ['match', ['get', 'class'], 'tram', '#2f8c96', 'light_rail', '#2f8c96', 'subway', '#8d638b', '#f3eee4'],
-      'line-opacity': ['interpolate', ['linear'], ['zoom'], 11, 0.62, 14, 0.88, 17, 1],
-      'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.45, 14, 1.25, 17, 2.2],
+      'line-color': [
+        'match',
+        ['get', 'class'],
+        'tram',
+        '#3e9c6f',
+        'light_rail',
+        '#3e9c6f',
+        'subway',
+        '#6f87b7',
+        '#2f7fbd',
+      ],
+      'line-width': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        11,
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.28, 0.6],
+        14,
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.68, 1.55],
+        17,
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 1.05, 2.65],
+      ],
+      'line-opacity': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        11,
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.42, 0.66],
+        14,
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.64, 0.82],
+        17,
+        ['case', ['in', ['get', 'class'], ['literal', TRAM_LINE_CLASSES]], 0.78, 0.92],
+      ],
+    },
+  },
+  {
+    id: 'transit-route-lines',
+    type: 'line',
+    source: 'tileme',
+    'source-layer': 'transit_routes',
+    minzoom: 11,
+    filter: ['in', ['get', 'class'], ['literal', SOLID_TRANSIT_ROUTE_CLASSES]],
+    paint: {
+      'line-color': [
+        'case',
+        ['has', 'colour'],
+        ['get', 'colour'],
+        ['match', ['get', 'class'], 'tram', '#3e9c6f', 'light_rail', '#3e9c6f', 'subway', '#6f87b7', '#2f7fbd'],
+      ],
+      'line-opacity': ['interpolate', ['linear'], ['zoom'], 11, 0.78, 14, 0.9, 17, 0.96],
+      'line-width': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        11,
+        ['match', ['get', 'class'], 'tram', 0.8, 'light_rail', 0.8, 1.1],
+        14,
+        ['match', ['get', 'class'], 'tram', 1.8, 'light_rail', 1.8, 2.4],
+        17,
+        ['match', ['get', 'class'], 'tram', 3, 'light_rail', 3, 4],
+      ],
+    },
+  },
+  {
+    id: 'transit-ferry-route-lines',
+    type: 'line',
+    source: 'tileme',
+    'source-layer': 'transit_routes',
+    minzoom: 11,
+    filter: ['==', ['get', 'class'], 'ferry'],
+    paint: {
+      'line-color': ['case', ['has', 'colour'], ['get', 'colour'], '#2479a8'],
+      'line-opacity': ['interpolate', ['linear'], ['zoom'], 11, 0.66, 14, 0.82, 17, 0.9],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.9, 14, 1.8, 17, 3.2],
+      'line-dasharray': [1.2, 1.2],
+    },
+  },
+  {
+    id: 'cycling-cycleway-casing',
+    type: 'line',
+    source: 'tileme',
+    'source-layer': 'roads',
+    minzoom: 13,
+    filter: ['==', ['get', 'class'], 'cycleway'],
+    paint: {
+      'line-color': '#f4fff7',
+      'line-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0.72, 16, 0.9],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 13, 1.4, 16, 3.2, 18, 4.2],
+    },
+  },
+  {
+    id: 'cycling-cycleways',
+    type: 'line',
+    source: 'tileme',
+    'source-layer': 'roads',
+    minzoom: 13,
+    filter: ['==', ['get', 'class'], 'cycleway'],
+    paint: {
+      'line-color': '#2b9b72',
+      'line-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0.76, 16, 0.96],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 13, 0.9, 16, 2.1, 18, 2.8],
+    },
+  },
+  {
+    id: 'cycling-lane-casing',
+    type: 'line',
+    source: 'tileme',
+    'source-layer': 'roads',
+    minzoom: 13,
+    filter: CYCLE_LANE_TAG_FILTER,
+    paint: {
+      'line-color': '#f4fff7',
+      'line-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0.68, 16, 0.88],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 13, 1, 16, 2.3, 18, 3.1],
+    },
+  },
+  {
+    id: 'cycling-lanes',
+    type: 'line',
+    source: 'tileme',
+    'source-layer': 'roads',
+    minzoom: 13,
+    filter: CYCLE_LANE_TAG_FILTER,
+    paint: {
+      'line-color': '#42b883',
+      'line-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0.72, 16, 0.94],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 13, 0.55, 16, 1.35, 18, 1.9],
+      'line-dasharray': [1.4, 0.8],
     },
   },
   {
@@ -1364,12 +1698,32 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     },
   },
   {
+    id: 'cycling-lane-labels',
+    type: 'symbol',
+    source: 'tileme',
+    'source-layer': 'roads',
+    minzoom: 15,
+    filter: ['all', ['has', 'name'], CYCLE_LANE_FILTER],
+    layout: {
+      'symbol-placement': 'line',
+      'text-field': ['get', 'name'],
+      'text-font': ['Noto Sans Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 15, 9, 18, 11],
+      'symbol-spacing': ['interpolate', ['linear'], ['zoom'], 15, 240, 18, 190],
+    },
+    paint: {
+      'text-color': '#287257',
+      'text-halo-color': '#f4fff7',
+      'text-halo-width': 1.1,
+    },
+  },
+  {
     id: 'railway-labels',
     type: 'symbol',
     source: 'tileme',
     'source-layer': 'roads',
     minzoom: 13,
-    filter: ['all', ['has', 'name'], ['in', ['get', 'class'], ['literal', RAILWAY_CLASSES]]],
+    filter: ['all', ['has', 'name'], RAILWAY_RENDER_FILTER],
     layout: {
       'symbol-placement': 'line',
       'text-field': ['get', 'name'],
@@ -1384,12 +1738,106 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     },
   },
   {
+    id: 'transit-stop-markers',
+    type: 'circle',
+    source: 'tileme',
+    'source-layer': 'pois',
+    minzoom: 14,
+    filter: RAIL_TRANSIT_STOP_FILTER,
+    paint: {
+      'circle-color': ['case', TRAM_TRANSIT_STOP_FILTER, '#217f7f', '#1d6f98'],
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 4.5, 16, 6, 18, 7],
+      'circle-stroke-color': '#fffdf5',
+      'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 14, 1.2, 18, 1.8],
+    },
+  },
+  {
+    id: 'transit-stop-labels',
+    type: 'symbol',
+    source: 'tileme',
+    'source-layer': 'transit_stop_labels',
+    minzoom: 14,
+    filter: RAIL_TRANSIT_STOP_FILTER,
+    layout: {
+      'icon-image': ['case', TRAM_TRANSIT_STOP_FILTER, TRAM_STOP_ICON, TRAIN_STOP_ICON],
+      'icon-size': ['interpolate', ['linear'], ['zoom'], 14, 0.42, 18, 0.58],
+      'icon-allow-overlap': false,
+      'text-field': ['get', 'name'],
+      'text-font': ['Noto Sans Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 14, 12, 18, 15],
+      'text-anchor': 'top',
+      'text-offset': [0, 1.2],
+      'text-allow-overlap': false,
+      'text-optional': true,
+      'symbol-sort-key': 0,
+    },
+    paint: {
+      'text-color': ['case', TRAM_TRANSIT_STOP_FILTER, '#17666a', '#165b80'],
+      'text-halo-color': '#fffdf5',
+      'text-halo-width': 1.35,
+    },
+  },
+  {
+    id: 'transit-platform-labels',
+    type: 'symbol',
+    source: 'tileme',
+    'source-layer': 'pois',
+    minzoom: 17,
+    filter: RAIL_TRANSIT_PLATFORM_FILTER,
+    layout: {
+      'text-field': ['get', 'name'],
+      'text-font': ['Noto Sans Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 17, 9, 18, 10],
+      'text-anchor': 'center',
+      'text-allow-overlap': true,
+      'text-ignore-placement': true,
+      'symbol-sort-key': 1,
+    },
+    paint: {
+      'text-color': '#2d718f',
+      'text-halo-color': '#fffdf5',
+      'text-halo-width': 1,
+    },
+  },
+  {
+    id: 'bus-stop-labels',
+    type: 'symbol',
+    source: 'tileme',
+    'source-layer': 'pois',
+    minzoom: 16,
+    filter: BUS_TRANSIT_STOP_FILTER,
+    layout: {
+      'icon-image': BUS_STOP_ICON,
+      'icon-size': ['interpolate', ['linear'], ['zoom'], 16, 0.38, 18, 0.48],
+      'icon-allow-overlap': false,
+      'text-field': ['get', 'name'],
+      'text-font': ['Noto Sans Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 16, 9, 18, 11],
+      'text-anchor': 'top',
+      'text-offset': [0, 1.05],
+      'text-allow-overlap': false,
+      'text-optional': true,
+      'symbol-sort-key': 1,
+    },
+    paint: {
+      'text-color': '#516e28',
+      'text-halo-color': '#fffdf5',
+      'text-halo-width': 1.15,
+    },
+  },
+  {
     id: 'transit-poi-labels',
     type: 'symbol',
     source: 'tileme',
     'source-layer': 'pois',
     minzoom: 14,
-    filter: ['==', ['get', 'source'], 'public_transport'],
+    filter: [
+      'all',
+      ['==', ['get', 'source'], 'public_transport'],
+      ['!', RAIL_TRANSIT_STOP_FILTER],
+      ['!', RAIL_TRANSIT_PLATFORM_FILTER],
+      ['!', BUS_TRANSIT_STOP_FILTER],
+    ],
     layout: {
       'text-field': ['get', 'name'],
       'text-font': ['Noto Sans Regular'],

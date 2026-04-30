@@ -89,6 +89,17 @@ local boundaries = osm2pgsql.define_relation_table(table_prefix .. 'boundaries',
   { column = 'geom', type = 'multilinestring', projection = srid },
 })
 
+local transit_routes = osm2pgsql.define_relation_table(table_prefix .. 'transit_routes', {
+  { column = 'import_name', type = 'text' },
+  { column = 'osm_id', type = 'bigint' },
+  { column = 'class', type = 'text' },
+  { column = 'name', type = 'text' },
+  { column = 'ref', type = 'text' },
+  { column = 'colour', type = 'text' },
+  { column = 'tags', type = 'jsonb' },
+  { column = 'geom', type = 'multilinestring', projection = srid },
+})
+
 local admin_areas = osm2pgsql.define_area_table(table_prefix .. 'admin_areas', {
   { column = 'import_name', type = 'text' },
   { column = 'osm_id', type = 'bigint' },
@@ -114,6 +125,19 @@ local function parse_height(value)
   return tonumber(number)
 end
 
+local function normalize_colour(value)
+  if value == nil then return nil end
+  local colour = string.match(value, '^%s*#?([0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])%s*$')
+  if colour then
+    return '#' .. string.upper(colour)
+  end
+  colour = string.match(value, '^%s*#?([0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])%s*$')
+  if colour then
+    return '#' .. string.upper(colour)
+  end
+  return nil
+end
+
 local kept_tag_keys = {
   ["access"] = true,
   ["addr:door"] = true,
@@ -130,9 +154,11 @@ local kept_tag_keys = {
   ["brewery"] = true,
   ["building"] = true,
   ["building:colour"] = true,
+  ["colour"] = true,
   ["building:levels"] = true,
   ["building:material"] = true,
   ["bus"] = true,
+  ["color"] = true,
   ["contact:email"] = true,
   ["contact:phone"] = true,
   ["contact:website"] = true,
@@ -183,6 +209,7 @@ local kept_tag_keys = {
   ["roof:colour"] = true,
   ["roof:levels"] = true,
   ["roof:shape"] = true,
+  ["route"] = true,
   ["route_ref"] = true,
   ["sac_scale"] = true,
   ["service"] = true,
@@ -199,6 +226,7 @@ local kept_tag_keys = {
   ["trail_visibility"] = true,
   ["train"] = true,
   ["tram"] = true,
+  ["usage"] = true,
   ["website"] = true,
   ["wheelchair"] = true,
   ["wikidata"] = true,
@@ -206,6 +234,7 @@ local kept_tag_keys = {
 }
 
 local kept_tag_prefixes = {
+  "cycleway:",
   "description:",
   "name:",
   "parking:lane:",
@@ -349,6 +378,14 @@ local railway_line_classes = {
   narrow_gauge = true,
   rail = true,
   subway = true,
+  tram = true,
+}
+
+local transit_route_classes = {
+  ferry = true,
+  light_rail = true,
+  subway = true,
+  train = true,
   tram = true,
 }
 
@@ -496,6 +533,23 @@ function osm2pgsql.process_node(object)
 end
 
 function osm2pgsql.process_relation(object)
+  local route = object.tags.route
+  if object.tags.type == 'route' and route and transit_route_classes[route] then
+    local route_geom = object:as_multilinestring()
+    if route_geom then
+      transit_routes:insert({
+        import_name = import_name,
+        osm_id = object.id,
+        class = route,
+        name = object.tags.name,
+        ref = object.tags.ref,
+        colour = normalize_colour(object.tags.colour or object.tags.color),
+        tags = kept_tags(object.tags),
+        geom = route_geom
+      })
+    end
+  end
+
   if object.tags.boundary == 'administrative' then
     local admin_level = as_int(object.tags.admin_level)
 

@@ -57,7 +57,9 @@ async fn tilejson() -> Json<TileJson> {
             layer("buildings", 14, MAX_ZOOM),
             layer("addresses", 16, MAX_ZOOM),
             layer("places", 2, MAX_ZOOM),
-            layer("pois", 15, MAX_ZOOM),
+            layer("pois", 14, MAX_ZOOM),
+            layer("transit_stop_labels", 14, MAX_ZOOM),
+            layer("transit_routes", 11, MAX_ZOOM),
             layer("boundaries", 0, MAX_ZOOM),
         ],
     })
@@ -74,6 +76,7 @@ fn layer(id: &'static str, minzoom: u8, maxzoom: u8) -> VectorLayer {
             "street": "String",
             "unit": "String",
             "ref": "String",
+            "colour": "String",
             "height": "Number",
             "admin_level": "Number",
             "tags": "Object"
@@ -239,9 +242,67 @@ pois AS (
     FROM (
         SELECT source, class, name, tags, ST_AsMVTGeom(p.geom, bounds.geom, 4096, 64, true) AS geom
         FROM osm_pois p, bounds
-        WHERE $1 >= 15
+        WHERE $1 >= 14
           AND p.geom && bounds.geom
     ) poi_rows
+),
+transit_stop_labels AS (
+    SELECT ST_AsMVT(transit_stop_label_rows, 'transit_stop_labels', 4096, 'geom') AS mvt
+    FROM (
+        SELECT
+            'public_transport' AS source,
+            CASE
+                WHEN stop_mode = 'tram' THEN 'tram_stop'
+                WHEN bool_or(class = 'station') THEN 'station'
+                ELSE 'halt'
+            END AS class,
+            name,
+            '{{}}'::jsonb AS tags,
+            ST_AsMVTGeom(ST_Centroid(ST_Collect(clustered_stops.geom)), bounds.geom, 4096, 64, true) AS geom
+        FROM (
+            SELECT
+                p.source,
+                p.class,
+                p.name,
+                p.tags,
+                p.geom,
+                CASE WHEN p.class = 'tram_stop' THEN 'tram' ELSE 'train' END AS stop_mode,
+                ST_ClusterDBSCAN(
+                    p.geom,
+                    eps := CASE WHEN $1 >= 17 THEN 350 ELSE 700 END,
+                    minpoints := 1
+                ) OVER (
+                    PARTITION BY
+                        p.import_name,
+                        lower(p.name),
+                        CASE WHEN p.class = 'tram_stop' THEN 'tram' ELSE 'train' END
+                ) AS stop_cluster
+            FROM osm_pois p, bounds
+            WHERE $1 >= 14
+              AND p.geom && ST_Expand(bounds.geom, CASE WHEN $1 >= 17 THEN 350 ELSE 700 END)
+              AND p.source = 'public_transport'
+              AND p.class IN ('halt', 'station', 'tram_stop')
+        ) clustered_stops, bounds
+        GROUP BY name, stop_mode, stop_cluster, bounds.geom
+    ) transit_stop_label_rows
+),
+transit_routes AS (
+    SELECT ST_AsMVT(transit_route_rows, 'transit_routes', 4096, 'geom') AS mvt
+    FROM (
+        SELECT class, name, ref, colour, tags, ST_AsMVTGeom(t.geom, bounds.geom, 4096, 64, true) AS geom
+        FROM osm_transit_routes t, bounds
+        WHERE $1 >= 11
+          AND t.geom && bounds.geom
+          AND (
+              $1 >= 14
+              OR ($1 >= 12 AND t.class IN ('train', 'subway', 'light_rail', 'tram', 'ferry'))
+              OR t.class IN ('train', 'subway')
+          )
+          AND (
+              $1 >= 13
+              OR ST_Length(t.geom) > 500
+          )
+    ) transit_route_rows
 ),
 boundaries AS (
     SELECT ST_AsMVT(boundary_rows, 'boundaries', 4096, 'geom') AS mvt
@@ -264,6 +325,8 @@ SELECT
     COALESCE((SELECT mvt FROM addresses), '\x'::bytea) ||
     COALESCE((SELECT mvt FROM places), '\x'::bytea) ||
     COALESCE((SELECT mvt FROM pois), '\x'::bytea) ||
+    COALESCE((SELECT mvt FROM transit_stop_labels), '\x'::bytea) ||
+    COALESCE((SELECT mvt FROM transit_routes), '\x'::bytea) ||
     COALESCE((SELECT mvt FROM boundaries), '\x'::bytea) AS mvt
 "#
     );

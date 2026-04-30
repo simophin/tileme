@@ -619,6 +619,10 @@ const IMPORT_TABLES: &[ImportTable] = &[
         columns: "import_name, osm_id, admin_level, name, tags, geom",
     },
     ImportTable {
+        name: "transit_routes",
+        columns: "import_name, osm_id, class, name, ref, colour, tags, geom",
+    },
+    ImportTable {
         name: "admin_areas",
         columns: "import_name, osm_id, admin_level, name, tags, geom",
     },
