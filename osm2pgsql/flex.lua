@@ -297,7 +297,37 @@ local leisure_pois = {
   swimming_pool = true,
 }
 
+local public_transport_pois = {
+  platform = true,
+  station = true,
+  stop_position = true,
+}
+
+local railway_pois = {
+  halt = true,
+  station = true,
+  subway_entrance = true,
+  tram_stop = true,
+}
+
+local transport_amenity_pois = {
+  bus_station = true,
+  ferry_terminal = true,
+}
+
 local function poi_source_and_class(tags)
+  if tags.public_transport and public_transport_pois[tags.public_transport] then
+    return 'public_transport', tags.public_transport
+  end
+  if tags.railway and railway_pois[tags.railway] then
+    return 'public_transport', tags.railway
+  end
+  if tags.highway == 'bus_stop' then
+    return 'public_transport', 'bus_stop'
+  end
+  if tags.amenity and transport_amenity_pois[tags.amenity] then
+    return 'public_transport', tags.amenity
+  end
   if tags.tourism and tourism_pois[tags.tourism] then
     return 'tourism', tags.tourism
   end
@@ -313,6 +343,15 @@ local function poi_source_and_class(tags)
   return nil, nil
 end
 
+local railway_line_classes = {
+  light_rail = true,
+  monorail = true,
+  narrow_gauge = true,
+  rail = true,
+  subway = true,
+  tram = true,
+}
+
 function osm2pgsql.process_way(object)
   local highway = object.tags.highway
   if highway then
@@ -320,6 +359,22 @@ function osm2pgsql.process_way(object)
       import_name = import_name,
       osm_id = object.id,
       class = highway,
+      name = object.tags.name,
+      ref = object.tags.ref,
+      layer = as_int(object.tags.layer),
+      tunnel = as_bool(object.tags.tunnel),
+      bridge = as_bool(object.tags.bridge),
+      tags = kept_tags(object.tags),
+      geom = object:as_linestring()
+    })
+  end
+
+  local railway = object.tags.railway
+  if railway and railway_line_classes[railway] and not highway then
+    roads:insert({
+      import_name = import_name,
+      osm_id = object.id,
+      class = railway,
       name = object.tags.name,
       ref = object.tags.ref,
       layer = as_int(object.tags.layer),

@@ -154,7 +154,10 @@ matches AS (
     SELECT
         'road' AS layer,
         r.osm_id,
-        'highway' AS source,
+        CASE
+            WHEN r.class IN ('rail', 'light_rail', 'subway', 'tram', 'monorail', 'narrow_gauge') THEN 'railway'
+            ELSE 'highway'
+        END AS source,
         r.class,
         COALESCE(r.name, r.ref) AS name,
         r.tags,

@@ -792,6 +792,13 @@ type PoiTagItem = {
 };
 
 const POI_TAGS: Array<{ key: string; label: string }> = [
+  { key: 'public_transport', label: 'Transit' },
+  { key: 'railway', label: 'Railway' },
+  { key: 'route_ref', label: 'Routes' },
+  { key: 'network', label: 'Network' },
+  { key: 'bus', label: 'Bus' },
+  { key: 'train', label: 'Train' },
+  { key: 'tram', label: 'Tram' },
   { key: 'cuisine', label: 'Cuisine' },
   { key: 'opening_hours', label: 'Hours' },
   { key: 'phone', label: 'Phone' },
@@ -870,6 +877,20 @@ function formatMeters(value: number) {
   }
   return `${Math.round(value)} m`;
 }
+
+const WALKING_TRACK_CLASSES = ['track', 'path', 'footway', 'pedestrian', 'bridleway', 'cycleway'];
+const RAILWAY_CLASSES = ['rail', 'light_rail', 'subway', 'tram', 'monorail', 'narrow_gauge'];
+const ROAD_CLASSES = [
+  'motorway',
+  'trunk',
+  'primary',
+  'secondary',
+  'tertiary',
+  'unclassified',
+  'residential',
+  'service',
+  'living_street',
+];
 
 const mapLayers: maplibregl.LayerSpecification[] = [
   {
@@ -958,6 +979,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     source: 'tileme',
     'source-layer': 'roads',
     minzoom: 5,
+    filter: ['in', ['get', 'class'], ['literal', ROAD_CLASSES]],
     paint: {
       'line-color': '#b8afa4',
       'line-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.5, 10, 0.75, 14, 0.9],
@@ -970,10 +992,65 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     source: 'tileme',
     'source-layer': 'roads',
     minzoom: 5,
+    filter: ['in', ['get', 'class'], ['literal', ROAD_CLASSES]],
     paint: {
       'line-color': ['case', ['in', ['get', 'class'], ['literal', ['motorway', 'trunk']]], '#f1b35f', '#fff8ea'],
       'line-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.72, 10, 0.9, 14, 1],
       'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.45, 10, 1.35, 14, 4.6],
+    },
+  },
+  {
+    id: 'railway-casing',
+    type: 'line',
+    source: 'tileme',
+    'source-layer': 'roads',
+    minzoom: 11,
+    filter: ['in', ['get', 'class'], ['literal', RAILWAY_CLASSES]],
+    paint: {
+      'line-color': '#6f6b68',
+      'line-opacity': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 14, 0.78, 17, 0.9],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.9, 14, 2.1, 17, 3.4],
+    },
+  },
+  {
+    id: 'railway-lines',
+    type: 'line',
+    source: 'tileme',
+    'source-layer': 'roads',
+    minzoom: 11,
+    filter: ['in', ['get', 'class'], ['literal', RAILWAY_CLASSES]],
+    paint: {
+      'line-color': ['match', ['get', 'class'], 'tram', '#2f8c96', 'light_rail', '#2f8c96', 'subway', '#8d638b', '#f3eee4'],
+      'line-opacity': ['interpolate', ['linear'], ['zoom'], 11, 0.62, 14, 0.88, 17, 1],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.45, 14, 1.25, 17, 2.2],
+    },
+  },
+  {
+    id: 'walking-tracks',
+    type: 'line',
+    source: 'tileme',
+    'source-layer': 'roads',
+    minzoom: 13,
+    filter: ['in', ['get', 'class'], ['literal', WALKING_TRACK_CLASSES]],
+    paint: {
+      'line-color': ['match', ['get', 'class'], 'cycleway', '#3f8a8d', '#6c8f4f'],
+      'line-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0.72, 16, 0.95],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 13, 0.7, 16, 1.7, 18, 2.3],
+      'line-dasharray': [1.2, 0.8],
+    },
+  },
+  {
+    id: 'walking-steps',
+    type: 'line',
+    source: 'tileme',
+    'source-layer': 'roads',
+    minzoom: 13,
+    filter: ['==', ['get', 'class'], 'steps'],
+    paint: {
+      'line-color': '#6c8f4f',
+      'line-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0.72, 16, 0.95],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 13, 0.7, 16, 1.7, 18, 2.3],
+      'line-dasharray': [0.4, 0.55],
     },
   },
   {
@@ -1076,6 +1153,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     source: 'tileme',
     'source-layer': 'roads',
     minzoom: 5,
+    filter: ['in', ['get', 'class'], ['literal', ROAD_CLASSES]],
     layout: {
       'symbol-placement': 'line',
       'text-field': ['coalesce', ['get', 'name'], ['get', 'ref']],
@@ -1087,6 +1165,46 @@ const mapLayers: maplibregl.LayerSpecification[] = [
       'text-color': '#5c554c',
       'text-halo-color': '#fff8ea',
       'text-halo-width': 1.2,
+    },
+  },
+  {
+    id: 'walking-track-labels',
+    type: 'symbol',
+    source: 'tileme',
+    'source-layer': 'roads',
+    minzoom: 15,
+    filter: ['all', ['has', 'name'], ['in', ['get', 'class'], ['literal', WALKING_TRACK_CLASSES]]],
+    layout: {
+      'symbol-placement': 'line',
+      'text-field': ['get', 'name'],
+      'text-font': ['Noto Sans Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 15, 9, 18, 11],
+      'symbol-spacing': ['interpolate', ['linear'], ['zoom'], 15, 240, 18, 190],
+    },
+    paint: {
+      'text-color': '#4f6e40',
+      'text-halo-color': '#f2f8e9',
+      'text-halo-width': 1.1,
+    },
+  },
+  {
+    id: 'railway-labels',
+    type: 'symbol',
+    source: 'tileme',
+    'source-layer': 'roads',
+    minzoom: 13,
+    filter: ['all', ['has', 'name'], ['in', ['get', 'class'], ['literal', RAILWAY_CLASSES]]],
+    layout: {
+      'symbol-placement': 'line',
+      'text-field': ['get', 'name'],
+      'text-font': ['Noto Sans Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 13, 9, 18, 11],
+      'symbol-spacing': ['interpolate', ['linear'], ['zoom'], 13, 320, 18, 230],
+    },
+    paint: {
+      'text-color': '#5f5361',
+      'text-halo-color': '#faf4ea',
+      'text-halo-width': 1.1,
     },
   },
   {
@@ -1102,7 +1220,7 @@ const mapLayers: maplibregl.LayerSpecification[] = [
       'text-anchor': 'top',
       'text-offset': [0, 0.6],
       'text-allow-overlap': false,
-      'symbol-sort-key': ['match', ['get', 'source'], 'tourism', 1, 'amenity', 2, 'leisure', 3, 'shop', 4, 5],
+      'symbol-sort-key': ['match', ['get', 'source'], 'public_transport', 1, 'tourism', 2, 'amenity', 3, 'leisure', 4, 'shop', 5, 6],
     },
     paint: {
       'text-color': '#4f463b',

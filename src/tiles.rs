@@ -185,8 +185,9 @@ roads AS (
           AND r.geom && bounds.geom
           AND (
               $1 >= 14
-              OR ($1 >= 13 AND r.class IN ('motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential'))
+              OR ($1 >= 13 AND r.class IN ('motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'track', 'path', 'footway', 'steps', 'pedestrian', 'bridleway', 'cycleway'))
               OR ($1 >= 12 AND r.class IN ('motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified'))
+              OR ($1 >= 11 AND r.class IN ('rail', 'light_rail', 'subway', 'tram', 'monorail', 'narrow_gauge'))
               OR ($1 >= 10 AND r.class IN ('motorway', 'trunk', 'primary', 'secondary', 'tertiary'))
               OR ($1 >= 8 AND r.class IN ('motorway', 'trunk', 'primary'))
               OR ($1 >= 6 AND r.class IN ('motorway', 'trunk'))
