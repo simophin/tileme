@@ -33,12 +33,10 @@ RUN apt-get update \
 
 COPY --from=backend-build /work/target/release/tileme /usr/local/bin/tileme
 
-ENV TILEME_LISTEN_ADDR=0.0.0.0:3000 \
-    TILEME_IMPORT_DIR=/tmp/tileme-imports \
-    TILEME_OSM2PGSQL_BIN=/usr/bin/osm2pgsql
+ENV TILEME_LISTEN_ADDR=0.0.0.0:3000
 
 USER tileme
 
 EXPOSE 3000
 
-ENTRYPOINT ["/usr/local/bin/tileme"]
+ENTRYPOINT ["/usr/local/bin/tileme", "--osm2pgsql-bin", "/usr/bin/osm2pgsql"]
