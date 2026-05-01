@@ -1,95 +1,22 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
+import { createEffect, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import { render } from 'solid-js/web';
 import maplibregl, { Map } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
-
-type ImportState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
-
-type ImportJob = {
-  id: string;
-  import_name: string;
-  source_type: 'local_path' | 'url';
-  source_value: string;
-  mode: string;
-  state: ImportState;
-  progress_message: string | null;
-  log_tail: string;
-  error_message: string | null;
-  cancel_requested: boolean;
-  started_at: string | null;
-  finished_at: string | null;
-  heartbeat_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type ImportName = {
-  name: string;
-};
-
-type ApiError = {
-  error?: string;
-};
-
-type IdentifiedFeature = {
-  layer: string;
-  osm_id: number;
-  source: string | null;
-  class: string | null;
-  name: string;
-  tags: Record<string, unknown>;
-  distance_meters: number;
-  lat: number | null;
-  lon: number | null;
-};
-
-type IdentifyResponse = {
-  lat: number;
-  lon: number;
-  radius_meters: number;
-  features: IdentifiedFeature[];
-};
-
-type ResolvedAddress = {
-  osm_id: number;
-  formatted_address: string;
-  unit: string | null;
-  house_number: string;
-  street: string | null;
-  suburb: string | null;
-  city: string | null;
-  state: string | null;
-  postcode: string | null;
-  country: string | null;
-  distance_meters: number;
-  lat: number;
-  lon: number;
-};
-
-type AddressLookupResponse = {
-  lat: number;
-  lon: number;
-  radius_meters: number;
-  address: ResolvedAddress | null;
-};
-
-type SearchResult = {
-  layer: string;
-  import_name: string;
-  osm_id: number;
-  source: string | null;
-  class: string | null;
-  name: string;
-  distance_meters: number | null;
-  lat: number;
-  lon: number;
-};
-
-type SearchResponse = {
-  query: string;
-  results: SearchResult[];
-};
+import { ImportPanel } from './components/ImportPanel';
+import { IdentifyPanel, LayerPanel, SearchControl } from './components/MapPanels';
+import type {
+  AddressLookupResponse,
+  IdentifyResponse,
+  ImportJob,
+  ImportName,
+  MapLayerKey,
+  MapLayerSettings,
+  SearchResponse,
+  SearchResult,
+  StoredMapView,
+} from './types';
+import { readApiError } from './utils/formatters';
 
 const MAX_MAP_ZOOM = 18;
 const MAP_VIEW_STORAGE_KEY = 'tileme.map.view.v1';
@@ -99,18 +26,6 @@ const IDENTIFY_LONG_PRESS_MOVE_TOLERANCE_PX = 10;
 const IDENTIFY_POST_LONG_PRESS_SUPPRESS_MS = 700;
 const SEARCH_DEBOUNCE_MS = 220;
 const SEARCH_MIN_QUERY_CHARS = 2;
-
-type MapLayerKey = 'transit' | 'walking' | 'cycling' | 'amenities';
-
-type MapLayerSettings = Record<MapLayerKey, boolean>;
-
-type StoredMapView = {
-  lng: number;
-  lat: number;
-  zoom: number;
-  bearing: number;
-  pitch: number;
-};
 
 const DEFAULT_MAP_VIEW: StoredMapView = {
   lng: 133.7751,
@@ -346,141 +261,34 @@ function App() {
           getImportPanelElement={() => importPanelRef}
         />
       </section>
-
-      <aside
-        ref={importPanelRef}
-        id="import-panel"
-        class="sidePanel"
-        classList={{ open: isImportPanelOpen() }}
-        aria-label="Import controls"
-      >
-        <div class="brand">
-          <h1>tileme</h1>
-          <div class="brandActions">
-            <StatusPill job={activeJob()} />
-            <button class="iconButton" type="button" onClick={() => setIsImportPanelOpen(false)}>
-              Close
-            </button>
-          </div>
-        </div>
-
-        <form class="importForm" onSubmit={submitImport}>
-          <div class="segmented" role="radiogroup" aria-label="Import name mode">
-            <button
-              type="button"
-              classList={{ selected: importNameMode() === 'existing' }}
-              onClick={() => setImportNameMode('existing')}
-              disabled={importNames().length === 0}
-            >
-              Existing
-            </button>
-            <button
-              type="button"
-              classList={{ selected: importNameMode() === 'new' }}
-              onClick={() => setImportNameMode('new')}
-            >
-              New
-            </button>
-          </div>
-
-          <Show
-            when={importNameMode() === 'existing' && importNames().length > 0}
-            fallback={
-              <label class="field">
-                <span>Import name</span>
-                <input
-                  value={newImportName()}
-                  onInput={(event) => setNewImportName(event.currentTarget.value)}
-                  placeholder="australia"
-                  maxlength="80"
-                  required
-                />
-              </label>
-            }
-          >
-            <label class="field">
-              <span>Import name</span>
-              <select
-                value={selectedImportName()}
-                onInput={(event) => setSelectedImportName(event.currentTarget.value)}
-                required
-              >
-                <For each={importNames()}>
-                  {(name) => <option value={name.name}>{name.name}</option>}
-                </For>
-              </select>
-            </label>
-          </Show>
-
-          <div class="segmented" role="radiogroup" aria-label="Import source type">
-            <button
-              type="button"
-              classList={{ selected: sourceKind() === 'local_path' }}
-              onClick={() => setSourceKind('local_path')}
-            >
-              File path
-            </button>
-            <button
-              type="button"
-              classList={{ selected: sourceKind() === 'url' }}
-              onClick={() => setSourceKind('url')}
-            >
-              URL
-            </button>
-          </div>
-
-          <label class="field">
-            <span>{sourceKind() === 'url' ? 'OSM PBF URL' : 'Server file path'}</span>
-            <input
-              value={sourceValue()}
-              onInput={(event) => setSourceValue(event.currentTarget.value)}
-              placeholder={
-                sourceKind() === 'url'
-                  ? 'https://download.geofabrik.de/.../latest.osm.pbf'
-                  : '/data/osm/australia-latest.osm.pbf'
-              }
-              required
-            />
-          </label>
-
-          <Show when={submitError()}>
-            {(error) => <p class="errorText">{error()}</p>}
-          </Show>
-
-          <button class="primaryButton" type="submit" disabled={isSubmitting()}>
-            {isSubmitting() ? 'Starting import' : 'Start import'}
-          </button>
-        </form>
-
-        <div class="jobsHeader">
-          <h2>Import jobs</h2>
-          <button type="button" onClick={() => void loadJobs()}>
-            Refresh
-          </button>
-        </div>
-
-        <Show when={jobsError()}>
-          {(error) => <p class="errorText">{error()}</p>}
-        </Show>
-
-        <div class="jobList">
-          <Show
-            when={jobs().length > 0}
-            fallback={<p class="emptyState">No imports yet.</p>}
-          >
-            <For each={jobs()}>
-              {(job) => (
-                <JobRow
-                  job={job}
-                  onCancel={cancelJob}
-                  onRerun={rerunJob}
-                  isRerunning={rerunningJobId() === job.id}
-                />
-              )}
-            </For>
-          </Show>
-        </div>
-      </aside>
+      <ImportPanel
+        open={isImportPanelOpen()}
+        panelRef={(element) => {
+          importPanelRef = element;
+        }}
+        activeJob={activeJob()}
+        importNames={importNames()}
+        jobs={jobs()}
+        jobsError={jobsError()}
+        submitError={submitError()}
+        importNameMode={importNameMode()}
+        selectedImportName={selectedImportName()}
+        newImportName={newImportName()}
+        sourceKind={sourceKind()}
+        sourceValue={sourceValue()}
+        isSubmitting={isSubmitting()}
+        rerunningJobId={rerunningJobId()}
+        onClose={() => setIsImportPanelOpen(false)}
+        onSubmit={submitImport}
+        onRefreshJobs={loadJobs}
+        onCancelJob={cancelJob}
+        onRerunJob={rerunJob}
+        onImportNameModeChange={setImportNameMode}
+        onSelectedImportNameChange={setSelectedImportName}
+        onNewImportNameChange={setNewImportName}
+        onSourceKindChange={setSourceKind}
+        onSourceValueChange={setSourceValue}
+      />
     </main>
   );
 }
@@ -1054,154 +862,41 @@ function TileMap(props: TileMapProps) {
   return (
     <>
       <div ref={containerRef} class="map" />
-      <section class="searchControl" aria-label="Map search">
-        <form class="searchForm" onSubmit={submitSearch}>
-          <input
-            value={searchQuery()}
-            onInput={(event) => handleSearchInput(event.currentTarget.value)}
-            onFocus={() => setIsSearchPanelOpen(searchQuery().trim().length >= SEARCH_MIN_QUERY_CHARS)}
-            placeholder="Search places, POIs, transit"
-            aria-label="Search map"
-          />
-          <Show when={searchQuery().trim().length > 0}>
-            <button type="button" class="searchClearButton" onClick={clearSearch} aria-label="Clear search">
-              Clear
-            </button>
-          </Show>
-        </form>
-        <Show when={isSearchPanelOpen()}>
-          <div class="searchResults" role="listbox" aria-label="Search results">
-            <Show when={isSearching()}>
-              <p class="searchStatus">Searching</p>
-            </Show>
-            <Show when={searchError()}>
-              {(error) => <p class="errorText">{error()}</p>}
-            </Show>
-            <Show
-              when={!searchError() && searchResults().length > 0}
-              fallback={
-                <Show when={!isSearching() && !searchError() && searchQuery().trim().length >= SEARCH_MIN_QUERY_CHARS}>
-                  <p class="emptyState searchEmpty">No results found.</p>
-                </Show>
-              }
-            >
-              <div class="searchList">
-                <For each={searchResults()}>
-                  {(result) => (
-                    <button type="button" class="searchResult" onClick={() => selectSearchResult(result)}>
-                      <span>
-                        <strong>{result.name}</strong>
-                        <small>{searchResultLabel(result)}</small>
-                      </span>
-                      <small>{formatSearchDistance(result.distance_meters)}</small>
-                    </button>
-                  )}
-                </For>
-              </div>
-            </Show>
-          </div>
-        </Show>
-      </section>
-      <section
-        ref={layerPanelRef}
-        id="layer-control"
-        class="layerControl"
-        classList={{ open: isLayerPanelOpen() }}
-        aria-label="Map layers"
-      >
-        <h2>Layers</h2>
-        <div class="layerToggleList">
-          <For each={MAP_LAYER_OPTIONS}>
-            {(option) => (
-              <label class="layerToggle">
-                <input
-                  type="checkbox"
-                  checked={layerSettings()[option.key]}
-                  onChange={() => toggleLayerSetting(option.key)}
-                />
-                <span>{option.label}</span>
-              </label>
-            )}
-          </For>
-        </div>
-      </section>
-      <Show when={mapError()}>{(error) => <div class="mapError">{error()}</div>}</Show>
-      <Show when={identifyResult()}>
-        {(result) => (
-          <section ref={panelRef} class="identifyPanel" aria-label="Clicked point details">
-            <div class="identifyHeader">
-              <div>
-                <h2>Point</h2>
-                <p>{formatCoordinate(result().lat, result().lon)}</p>
-                <Show when={addressResult()?.address}>
-                  {(address) => <p class="identifyAddress">{address().formatted_address}</p>}
-                </Show>
-              </div>
-              <button type="button" class="iconButton" onClick={clearIdentify}>
-                Close
-              </button>
-            </div>
-
-            <Show when={isIdentifying()}>
-              <p class="identifyStatus">Looking up nearby map features</p>
-            </Show>
-
-            <Show when={isLookingUpAddress()}>
-              <p class="identifyStatus">Looking up nearest address</p>
-            </Show>
-
-            <Show when={identifyError()}>
-              {(error) => <p class="errorText">{error()}</p>}
-            </Show>
-
-            <Show when={addressError()}>
-              {(error) => <p class="errorText">{error()}</p>}
-            </Show>
-
-            <Show
-              when={!isIdentifying() && !identifyError() && result().features.length > 0}
-              fallback={
-                <Show when={!isIdentifying() && !identifyError() && !isLookingUpAddress()}>
-                  <p class="emptyState">
-                    <Show
-                      when={addressResult()?.address}
-                      fallback={`No mapped features found within ${formatMeters(result().radius_meters)}.`}
-                    >
-                      No mapped features found near this point.
-                    </Show>
-                  </p>
-                </Show>
-              }
-            >
-              <div class="identifyList">
-                <For each={result().features}>
-                  {(feature) => (
-                    <article class="identifyItem">
-                      <div>
-                        <strong>{feature.name}</strong>
-                        <span>{featureLabel(feature)}</span>
-                        <Show when={poiTagItems(feature).length > 0}>
-                          <dl class="poiTags">
-                            <For each={poiTagItems(feature)}>
-                              {(tag) => (
-                                <div>
-                                  <dt>{tag.label}</dt>
-                                  <dd>{tag.value}</dd>
-                                </div>
-                              )}
-                            </For>
-                          </dl>
-                        </Show>
-                      </div>
-                      <small>{formatMeters(feature.distance_meters)}</small>
-                    </article>
-                  )}
-                </For>
-              </div>
-            </Show>
-          </section>
-        )}
-      </Show>
+      <SearchControl
+        query={searchQuery()}
+        results={searchResults()}
+        error={searchError()}
+        isSearching={isSearching()}
+        isOpen={isSearchPanelOpen()}
+        onSubmit={submitSearch}
+        onInput={handleSearchInput}
+        onFocus={() => setIsSearchPanelOpen(searchQuery().trim().length >= SEARCH_MIN_QUERY_CHARS)}
+        onClear={clearSearch}
+        onSelectResult={selectSearchResult}
+        minQueryChars={SEARCH_MIN_QUERY_CHARS}
+      />
+      <LayerPanel
+        open={isLayerPanelOpen()}
+        panelRef={(element) => {
+          layerPanelRef = element;
+        }}
+        settings={layerSettings()}
+        options={MAP_LAYER_OPTIONS}
+        onToggle={toggleLayerSetting}
+      />
+      {mapError() ? <div class="mapError">{mapError()}</div> : null}
+      <IdentifyPanel
+        result={identifyResult()}
+        addressResult={addressResult()}
+        identifyError={identifyError()}
+        addressError={addressError()}
+        isIdentifying={isIdentifying()}
+        isLookingUpAddress={isLookingUpAddress()}
+        panelRef={(element) => {
+          panelRef = element;
+        }}
+        onClose={clearIdentify}
+      />
     </>
   );
 }
@@ -1388,121 +1083,6 @@ function isValidStoredMapView(view: Partial<StoredMapView>): view is StoredMapVi
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
-}
-
-function formatCoordinate(lat: number, lon: number) {
-  return `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
-}
-
-function featureLabel(feature: IdentifiedFeature) {
-  return [feature.layer, feature.source, feature.class].filter(Boolean).join(' / ');
-}
-
-function searchResultLabel(result: SearchResult) {
-  return [result.import_name, result.layer, result.source, result.class].filter(Boolean).join(' / ');
-}
-
-function formatSearchDistance(value: number | null) {
-  if (value === null) {
-    return '';
-  }
-  if (value < 1000) {
-    return `${Math.round(value)} m`;
-  }
-  return `${Math.round(value / 1000)} km`;
-}
-
-type PoiTagItem = {
-  key: string;
-  label: string;
-  value: string;
-};
-
-const POI_TAGS: Array<{ key: string; label: string }> = [
-  { key: 'public_transport', label: 'Transit' },
-  { key: 'railway', label: 'Railway' },
-  { key: 'route_ref', label: 'Routes' },
-  { key: 'network', label: 'Network' },
-  { key: 'bus', label: 'Bus' },
-  { key: 'train', label: 'Train' },
-  { key: 'tram', label: 'Tram' },
-  { key: 'cuisine', label: 'Cuisine' },
-  { key: 'opening_hours', label: 'Hours' },
-  { key: 'phone', label: 'Phone' },
-  { key: 'contact:phone', label: 'Phone' },
-  { key: 'website', label: 'Website' },
-  { key: 'contact:website', label: 'Website' },
-  { key: 'wheelchair', label: 'Wheelchair' },
-  { key: 'internet_access', label: 'Internet' },
-  { key: 'outdoor_seating', label: 'Outdoor seating' },
-  { key: 'takeaway', label: 'Takeaway' },
-  { key: 'delivery', label: 'Delivery' },
-  { key: 'drive_through', label: 'Drive-through' },
-  { key: 'operator', label: 'Operator' },
-  { key: 'brand', label: 'Brand' },
-  { key: 'diet:vegetarian', label: 'Vegetarian' },
-  { key: 'diet:vegan', label: 'Vegan' },
-  { key: 'diet:halal', label: 'Halal' },
-  { key: 'diet:kosher', label: 'Kosher' },
-  { key: 'toilets', label: 'Toilets' },
-  { key: 'fee', label: 'Fee' },
-  { key: 'heritage', label: 'Heritage' },
-  { key: 'start_date', label: 'Opened' },
-];
-
-function poiTagItems(feature: IdentifiedFeature): PoiTagItem[] {
-  if (feature.layer !== 'poi') {
-    return [];
-  }
-
-  const seenLabels = new Set<string>();
-  const items: PoiTagItem[] = [];
-
-  for (const tag of POI_TAGS) {
-    const value = formatTagValue(feature.tags?.[tag.key]);
-    if (!value || seenLabels.has(tag.label)) {
-      continue;
-    }
-    seenLabels.add(tag.label);
-    items.push({ ...tag, value });
-  }
-
-  return items.slice(0, 6);
-}
-
-function formatTagValue(value: unknown) {
-  if (typeof value === 'boolean') {
-    return value ? 'Yes' : 'No';
-  }
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return String(value);
-  }
-  if (typeof value !== 'string') {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-  if (trimmed === 'yes') {
-    return 'Yes';
-  }
-  if (trimmed === 'no') {
-    return 'No';
-  }
-  if (trimmed === 'limited') {
-    return 'Limited';
-  }
-
-  return trimmed.replace(/_/g, ' ');
-}
-
-function formatMeters(value: number) {
-  if (value < 1) {
-    return 'at point';
-  }
-  return `${Math.round(value)} m`;
 }
 
 const WALKING_TRACK_CLASSES = ['track', 'path', 'footway', 'pedestrian', 'bridleway'];
@@ -2248,82 +1828,5 @@ const mapLayers: maplibregl.LayerSpecification[] = [
     },
   },
 ];
-
-function JobRow(props: {
-  job: ImportJob;
-  onCancel: (id: string) => Promise<void>;
-  onRerun: (id: string) => Promise<void>;
-  isRerunning: boolean;
-}) {
-  const canCancel = createMemo(() => props.job.state === 'queued' || props.job.state === 'running');
-  const canRerun = createMemo(() => !canCancel());
-  const message = createMemo(() => props.job.error_message ?? props.job.progress_message ?? props.job.log_tail);
-
-  return (
-    <article class="jobRow">
-      <div class="jobTop">
-        <span class={`stateBadge ${props.job.state}`}>{props.job.state}</span>
-        <time>{formatDate(props.job.created_at)}</time>
-      </div>
-      <p class="importName">{props.job.import_name}</p>
-      <p class="sourceValue" title={props.job.source_value}>
-        {props.job.source_value}
-      </p>
-      <Show when={message()}>
-        {(text) => <p class={props.job.error_message ? 'jobError' : 'jobMessage'}>{text()}</p>}
-      </Show>
-      <div class="jobActions">
-        <span>{props.job.source_type === 'url' ? 'URL' : 'Path'}</span>
-        <Show when={canRerun()}>
-          <button
-            type="button"
-            onClick={() => void props.onRerun(props.job.id)}
-            disabled={props.isRerunning}
-          >
-            {props.isRerunning ? 'Re-running' : 'Re-run'}
-          </button>
-        </Show>
-        <Show when={canCancel()}>
-          <button
-            type="button"
-            onClick={() => void props.onCancel(props.job.id)}
-            disabled={props.job.cancel_requested}
-          >
-            {props.job.cancel_requested ? 'Cancel pending' : 'Cancel'}
-          </button>
-        </Show>
-      </div>
-    </article>
-  );
-}
-
-function StatusPill(props: { job: ImportJob | null }) {
-  return (
-    <Show
-      when={props.job}
-      fallback={<span class="statusPill idle">Idle</span>}
-    >
-      {(job) => <span class={`statusPill ${job().state}`}>{job().state}</span>}
-    </Show>
-  );
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value));
-}
-
-async function readApiError(response: Response) {
-  try {
-    const body = (await response.json()) as ApiError;
-    return body.error ?? `${response.status} ${response.statusText}`;
-  } catch {
-    return `${response.status} ${response.statusText}`;
-  }
-}
 
 render(() => <App />, document.getElementById('root')!);
