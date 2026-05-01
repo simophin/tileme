@@ -228,6 +228,7 @@ function App() {
   const [isSubmitting, setIsSubmitting] = createSignal(false);
   const [rerunningJobId, setRerunningJobId] = createSignal<string | null>(null);
   const [isImportPanelOpen, setIsImportPanelOpen] = createSignal(false);
+  let importPanelRef: HTMLElement | undefined;
 
   const activeJob = createMemo(
     () => jobs().find((job) => job.state === 'running' || job.state === 'queued') ?? null,
@@ -340,11 +341,14 @@ function App() {
       <section class="mapPane" aria-label="Map">
         <TileMap
           isImportPanelOpen={isImportPanelOpen()}
-          openImportPanel={() => setIsImportPanelOpen(true)}
+          toggleImportPanel={() => setIsImportPanelOpen((open) => !open)}
+          closeImportPanel={() => setIsImportPanelOpen(false)}
+          getImportPanelElement={() => importPanelRef}
         />
       </section>
 
       <aside
+        ref={importPanelRef}
         id="import-panel"
         class="sidePanel"
         classList={{ open: isImportPanelOpen() }}
@@ -483,12 +487,15 @@ function App() {
 
 type TileMapProps = {
   isImportPanelOpen: boolean;
-  openImportPanel: () => void;
+  toggleImportPanel: () => void;
+  closeImportPanel: () => void;
+  getImportPanelElement: () => HTMLElement | undefined;
 };
 
 function TileMap(props: TileMapProps) {
   let containerRef!: HTMLDivElement;
   let panelRef: HTMLElement | undefined;
+  let layerPanelRef: HTMLElement | undefined;
   let map: Map | null = null;
   let identifyMarker: maplibregl.Marker | null = null;
   let searchMarker: maplibregl.Marker | null = null;
@@ -558,6 +565,7 @@ function TileMap(props: TileMapProps) {
     );
     map.addControl(createImportPanelControl(), 'top-left');
     map.addControl(createLayerPanelControl(), 'top-left');
+    map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-right');
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
     map.on('styleimagemissing', (event) => {
       if (event.id === TRAIN_STOP_ICON || event.id === TRAM_STOP_ICON || event.id === BUS_STOP_ICON) {
@@ -803,7 +811,7 @@ function TileMap(props: TileMapProps) {
     let button: HTMLButtonElement | null = null;
 
     function handleClick() {
-      props.openImportPanel();
+      props.toggleImportPanel();
     }
 
     return {
@@ -814,7 +822,7 @@ function TileMap(props: TileMapProps) {
         button = document.createElement('button');
         button.className = 'importPanelToggle';
         button.type = 'button';
-        button.setAttribute('aria-label', 'Open imports panel');
+        button.setAttribute('aria-label', 'Toggle imports panel');
         button.setAttribute('aria-controls', 'import-panel');
         button.setAttribute('aria-expanded', String(props.isImportPanelOpen));
         button.addEventListener('click', handleClick);
@@ -908,11 +916,27 @@ function TileMap(props: TileMapProps) {
   }
 
   function handleDocumentPointerDown(event: PointerEvent) {
+    const target = event.target as Node | null;
+
+    if (
+      isLayerPanelOpen() &&
+      !layerPanelRef?.contains(target ?? null) &&
+      !layerToggleButton?.contains(target ?? null)
+    ) {
+      setIsLayerPanelOpen(false);
+    }
+
+    if (
+      props.isImportPanelOpen &&
+      !props.getImportPanelElement()?.contains(target ?? null) &&
+      !importToggleButton?.contains(target ?? null)
+    ) {
+      props.closeImportPanel();
+    }
+
     if (!identifyResult() && !identifyError() && !isIdentifying()) {
       return;
     }
-
-    const target = event.target as Node | null;
     if (panelRef?.contains(target ?? null)) {
       return;
     }
@@ -1079,6 +1103,7 @@ function TileMap(props: TileMapProps) {
         </Show>
       </section>
       <section
+        ref={layerPanelRef}
         id="layer-control"
         class="layerControl"
         classList={{ open: isLayerPanelOpen() }}

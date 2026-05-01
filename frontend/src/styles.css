@@ -93,6 +93,26 @@ button:disabled {
   background: #eef6f8;
 }
 
+.maplibregl-ctrl-bottom-right {
+  display: grid;
+  gap: 8px;
+  right: 12px;
+  bottom: 12px;
+}
+
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl {
+  margin: 0;
+}
+
+.maplibregl-ctrl-scale {
+  min-width: 88px;
+  border: 0;
+  border-radius: 6px;
+  background: rgb(255 254 248 / 92%);
+  color: #2b3631;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 14%);
+}
+
 .searchControl {
   position: fixed;
   top: 18px;
@@ -634,6 +654,11 @@ h2 {
 
   .identifyPanel {
     bottom: 12px;
+  }
+
+  .maplibregl-ctrl-bottom-right {
+    right: 10px;
+    bottom: 10px;
   }
 
   .layerControl {
